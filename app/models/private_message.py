@@ -1,0 +1,39 @@
+"""Private message model."""
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+from app.models.global_message import MessageType
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+class PrivateMessage(Base):
+    __tablename__ = "private_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[MessageType] = mapped_column(
+        Enum(MessageType),
+        default=MessageType.text,
+        nullable=False,
+    )
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    sender: Mapped["User"] = relationship("User", back_populates="sent_private_messages", foreign_keys=[sender_id])
+    recipient: Mapped["User"] = relationship("User", back_populates="received_private_messages", foreign_keys=[recipient_id])
+
+    def __repr__(self) -> str:
+        return f"<PrivateMessage(id={self.id}, sender_id={self.sender_id}, recipient_id={self.recipient_id})>"
