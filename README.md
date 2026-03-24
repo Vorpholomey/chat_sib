@@ -52,6 +52,14 @@ FastAPI backend for a web-based chat application: global room, private messaging
 
    API: `http://127.0.0.1:8000`, docs: `http://127.0.0.1:8000/docs`.
 
+6. **Frontend (optional)**
+
+   ```bash
+   cd frontend && npm install && npm run dev
+   ```
+
+   Open `http://127.0.0.1:5173`. The Vite dev server proxies API and WebSocket calls to the backend on port 8000.
+
 ## Troubleshooting
 
 **`role "postgres" does not exist`**  
@@ -65,8 +73,9 @@ Use your Mac username (no password if you never set one). Then create the DB if 
 ## API Overview
 
 - **Auth**: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`
+- **Users**: `GET /api/users` (sidebar: all other users + online flag)
 - **Upload**: `POST /upload` (returns URL for use in messages)
-- **Private**: `GET /api/private/conversations`, `GET /api/private/messages/{user_id}?skip=0&limit=50`
+- **Private**: `GET /api/private/me`, `GET /api/private/conversations`, `GET /api/private/messages/{user_id}?skip=0&limit=50`
 - **WebSocket**: `WS /ws/chat?token=<access_token>`
   - On connect: last 1000 global messages are sent.
   - Send global message: `{"text": "...", "content_type": "text"|"image"|"gif"}`.

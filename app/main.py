@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.api import auth, upload, private, websocket
+from app.api import auth, upload, private, websocket, users
 
 app = FastAPI(
     title=settings.app_name,
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(upload.router)
 app.include_router(private.router)
+app.include_router(users.router)
 app.include_router(websocket.router)
 
 # Serve uploaded files at /uploads

@@ -47,6 +47,11 @@ build/
 .coverage
 htmlcov/
 
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
 # macOS
 .DS_Store
 .AppleDouble
