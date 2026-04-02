@@ -1,0 +1,179 @@
+---
+description: Full project architecture for chat_sib — monorepo layout, backend FastAPI stack, frontend React stack, data model, auth, WebSockets, and configuration.
+globs:
+  - "backend/**"
+  - "frontend/**"
+alwaysApply: false
+---
+
+# chat_sib — architecture
+
+This document describes the **chat_sib** repository: a full-stack, real-time chat application split into **`backend/`** (Python/FastAPI) and **`frontend/`** (React/TypeScript).
+
+## 1. Repository layout
+
+```
+chat_sib/
+├── architecture.mdc      # This file (Cursor rule + human-readable reference)
+├── README.md             # Monorepo entry: quick start for both apps
+├── backend/              # Python API, migrations, uploads working directory
+│   ├── app/              # FastAPI application package
+│   ├── alembic/          # SQL migrations
+│   ├── alembic.ini
+│   ├── requirements.txt
+│   └── .env.example      # Copy to .env; secrets never committed
+└── frontend/             # Vite + React SPA
+    ├── src/
+    ├── package.json
+    └── .env.example      # VITE_* for production builds
+```
+
+**Separation of concerns**
+
+- **Backend** owns persistence, authentication, authorization, WebSocket fan-out, file storage paths, and REST/OpenAPI contracts.
+- **Frontend** owns routing, UI state, optimistic UX, and calling the API/WebSocket using the same URL paths the backend exposes (often via the Vite dev proxy).
+
+## 2. Backend architecture
+
+### 2.1 Stack
+
+| Layer | Technology |
+|-------|------------|
+| HTTP | FastAPI, Uvicorn |
+| DB | PostgreSQL; SQLAlchemy 2.0 async sessions (`asyncpg`) |
+| Migrations | Alembic (sync URL, `psycopg2-binary`) |
+| Auth | JWT access + refresh; bcrypt via passlib |
+| Realtime | Single WebSocket endpoint `/ws/chat` + in-memory `WebSocketManager` |
+| Files | Local disk under configurable `UPLOAD_DIR` (default `uploads/`), served at `/uploads` |
+
+Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process pub/sub); the live WebSocket registry is in-process.
+
+### 2.2 Package layout (`backend/app/`)
+
+| Area | Responsibility |
+|------|----------------|
+| `main.py` | App factory: CORS, routers, static mount for `/uploads`, `/health` |
+| `core/config.py` | Pydantic settings: DB URLs, JWT, upload limits; loads `backend/.env` |
+| `core/security.py` | Password hashing, JWT create/decode |
+| `core/websocket_manager.py` | Track connections per user id; broadcast helpers |
+| `db/` | Async engine/session, declarative `Base` |
+| `models/` | ORM: `User`, `GlobalMessage`, `PrivateMessage`, `ChatSettings`, `ModerationAuditLog`, enums |
+| `schemas/` | Pydantic request/response DTOs |
+| `api/` | Routers: `auth`, `upload`, `private`, `users`, `websocket`, `messages`, `moderation`, `deps` |
+| `services/` | Business logic: auth, users, messages, permissions, audit |
+
+**Layering**: HTTP handlers in `api/` depend on `services/` and `models/`; `services/permissions` encodes role and ban rules used by REST and WebSockets.
+
+### 2.3 Authentication and authorization
+
+- **Registration / login** issue access and refresh tokens; clients send **Bearer** access tokens on HTTP and pass the same token to the WebSocket (query `token=` or `Authorization` header).
+- **Users** have a **role** (`user`, `moderator`, `admin`) and optional **public chat ban** (`public_ban_until`, `public_ban_permanent`).
+- **Moderation** endpoints (under `/api`) restrict ban/role actions to appropriate roles; message edit/delete/pin flows check permissions in services.
+
+### 2.4 WebSocket protocol (`/ws/chat`)
+
+- One connection per authenticated user; server sends **history** (global messages) and **pin state** after connect.
+- Inbound JSON can target the **global room** or a **private** peer via `recipient_id`.
+- Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`) so the client can branch without guessing shapes.
+
+### 2.5 REST surface (conceptual)
+
+- **Auth**: register, login, refresh (prefix depends on router mounting — see OpenAPI `/docs`).
+- **Users / private**: sidebar user list, “me”, conversations, paged private history.
+- **Messages**: global CRUD, pin/unpin, and related broadcasts; private message updates as implemented in `messages` and `services.message`.
+- **Upload**: multipart upload → public URL path under `/uploads/...`.
+- **Moderation**: ban user from public chat, change role (admin).
+
+### 2.6 Data model (high level)
+
+- **User**: identity, credentials hash, `UserRole`, ban fields, timestamps.
+- **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented.
+- **ChatSettings**: room-level state such as pinned message id (exact fields in models).
+- **ModerationAuditLog**: audit trail for moderation actions where used.
+
+**Time**: all stored times are **UTC**; API returns them in a consistent ISO-oriented form.
+
+### 2.7 Process and paths
+
+- Run API and Alembic with **`backend/` as the current working directory** so `alembic.ini`, `prepend_sys_path = .`, and relative `uploads/` match.
+- `app.core.config` resolves the env file to **`backend/.env`** (three levels above `app/core/config.py` = `backend/`).
+
+## 3. Frontend architecture
+
+### 3.1 Stack
+
+| Layer | Technology |
+|-------|------------|
+| UI | React 18, TypeScript |
+| Build | Vite |
+| Styling | Tailwind CSS |
+| HTTP | Axios (via `src/lib/api.ts` patterns) |
+| State | Zustand (auth persistence, chat store) |
+| Routing | React Router |
+| Notifications | Sonner toasts |
+
+### 3.2 Layout (`frontend/src/`)
+
+| Area | Responsibility |
+|------|----------------|
+| `pages/` | `LoginPage`, `RegisterPage`, `ChatPage` (main shell) |
+| `components/` | Message list, input, sidebar, header, modals, moderation UI, pins |
+| `hooks/` | `useChatSocket` — WebSocket lifecycle, event dispatch to store |
+| `store/` | Auth and chat global state |
+| `lib/` | API client, config, helpers (e.g. roles, message maps, floating menus) |
+| `types/` | Shared TS types aligned with API payloads |
+
+### 3.3 Development vs production HTTP
+
+- **Development**: `VITE_API_URL` empty; browser calls same origin (`localhost:5173`); **`vite.config.ts`** proxies `/api`, `/auth`, `/upload`, `/uploads`, `/ws` to `http://127.0.0.1:8000`.
+- **Production build**: set `VITE_API_URL` to the public API origin so the SPA talks to the backend host directly (no Vite proxy).
+
+### 3.4 Client realtime model
+
+- Single WebSocket connection tied to the logged-in user; events update Zustand stores so `MessageThread`, sidebar, and pins stay consistent.
+- Tokens live in **localStorage** (persisted store) under keys such as `chat-auth` (see `authStore`).
+
+## 4. Cross-cutting concerns
+
+- **CORS**: backend allows broad origins in dev-style config; tighten for production deployments.
+- **Security**: JWT secret must be strong in production; HTTPS for tokens in transit; file upload size and extension allowlists enforced server-side.
+- **Scalability**: in-memory WebSocket manager does not span multiple API instances; horizontal scale would need a shared pub/sub layer (Redis) and sticky sessions or shared connection registry.
+
+## 5. Configuration reference
+
+**Backend (`backend/.env`)** — see `backend/.env.example`:
+
+- `DATABASE_URL` / `DATABASE_URL_SYNC` — PostgreSQL (async and sync forms)
+- `SECRET_KEY`, token TTLs
+- `UPLOAD_DIR`, `MAX_UPLOAD_SIZE_MB`
+- `REDIS_URL` (reserved)
+
+**Frontend (`frontend/.env`)** — see `frontend/.env.example`:
+
+- `VITE_API_URL` — backend base URL for production builds
+
+## 6. How the pieces fit together
+
+```mermaid
+flowchart LR
+  subgraph client [Browser]
+    SPA[React SPA]
+  end
+  subgraph dev [Dev optional]
+    Vite[Vite dev server :5173]
+  end
+  subgraph api [backend]
+    FastAPI[FastAPI]
+    WS[WebSocketManager]
+    DB[(PostgreSQL)]
+    Disk[(uploads/)]
+  end
+  SPA -->|dev proxy| Vite
+  Vite --> FastAPI
+  SPA -->|prod VITE_API_URL| FastAPI
+  FastAPI --> DB
+  FastAPI --> Disk
+  FastAPI --> WS
+```
+
+This is the mental model for **chat_sib**: a **stateless REST + stateful in-process WebSocket** backend paired with a **SPA** that uses the same routes in dev (proxy) and prod (explicit API URL).

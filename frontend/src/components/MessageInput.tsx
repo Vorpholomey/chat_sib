@@ -1,30 +1,49 @@
 import { useState, useRef, type DragEvent } from "react";
-import { Send, ImagePlus } from "lucide-react";
+import { Send, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { assetUrl } from "../lib/config";
-import type { ContentType } from "../types/chat";
+import type { ChatLine, ContentType } from "../types/chat";
 
 type Props = {
-  onSendText: (text: string, type: ContentType) => void;
+  onSendText: (text: string, type: ContentType, replyToId?: number | null) => void;
   disabled?: boolean;
+  /** When set, sending includes reply_to_id */
+  replyTo?: ChatLine | null;
+  onClearReply?: () => void;
+  /** Inline edit: prefill and submit updates instead of send */
+  editingLine?: ChatLine | null;
+  onCancelEdit?: () => void;
+  onSubmitEdit?: (messageId: string | number, text: string) => void | Promise<void>;
 };
 
-export function MessageInput({ onSendText, disabled }: Props) {
-  const [text, setText] = useState("");
+export function MessageInput({
+  onSendText,
+  disabled,
+  replyTo,
+  onClearReply,
+  editingLine,
+  onCancelEdit,
+  onSubmitEdit,
+}: Props) {
+  const [text, setText] = useState(() =>
+    editingLine?.contentType === "text" ? editingLine.body : ""
+  );
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const isEditing = Boolean(editingLine);
+
   const uploadAndSend = async (file: File) => {
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
     const isGif = ext === "gif";
     try {
       const fd = new FormData();
       fd.append("file", file);
       const { data } = await api.post<{ url: string }>("/upload", fd);
       const full = assetUrl(data.url);
-      onSendText(full, isGif ? "gif" : "image");
+      onSendText(full, isGif ? "gif" : "image", replyTo?.id != null ? Number(replyTo.id) : undefined);
       setPreview(null);
       setPreviewFile(null);
     } catch {
@@ -48,15 +67,53 @@ export function MessageInput({ onSendText, disabled }: Props) {
     if (f) onPickFile(f);
   };
 
-  const submit = () => {
+  const submit = async () => {
     const t = text.trim();
     if (!t) return;
-    onSendText(t, "text");
+    if (isEditing && editingLine && onSubmitEdit) {
+      await onSubmitEdit(editingLine.id, t);
+      setText("");
+      onCancelEdit?.();
+      return;
+    }
+    onSendText(t, "text", replyTo?.id != null ? Number(replyTo.id) : undefined);
     setText("");
+    onClearReply?.();
   };
 
   return (
     <div className="shrink-0 space-y-2 border-t border-slate-800 pt-3">
+      {replyTo && !isEditing && (
+        <div className="flex items-start gap-2 rounded border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs text-slate-300">
+          <div className="min-w-0 flex-1">
+            <span className="font-medium text-violet-300">Replying to {replyTo.author}</span>
+            <p className="line-clamp-2 text-slate-500">{replyTo.body}</p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+            aria-label="Cancel reply"
+            onClick={() => onClearReply?.()}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+      {isEditing && editingLine && (
+        <div className="flex items-center justify-between gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+          <span>Editing message</span>
+          <button
+            type="button"
+            className="rounded px-2 py-1 hover:bg-amber-900/50"
+            onClick={() => {
+              setText("");
+              onCancelEdit?.();
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       {preview && (
         <div className="flex items-start gap-2 rounded border border-slate-700 bg-slate-900/80 p-2">
           <img src={preview} alt="" className="h-20 w-20 rounded object-cover" />
@@ -96,7 +153,7 @@ export function MessageInput({ onSendText, disabled }: Props) {
         />
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || isEditing}
           className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           title="Upload image"
           onClick={() => fileRef.current?.click()}
@@ -105,14 +162,14 @@ export function MessageInput({ onSendText, disabled }: Props) {
         </button>
         <input
           className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
-          placeholder="Type a message…"
+          placeholder={isEditing ? "Edit message…" : "Type a message…"}
           value={text}
           disabled={disabled}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              submit();
+              void submit();
             }
           }}
         />
@@ -120,10 +177,10 @@ export function MessageInput({ onSendText, disabled }: Props) {
           type="button"
           disabled={disabled || !text.trim()}
           className="flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
-          onClick={submit}
+          onClick={() => void submit()}
         >
           <Send className="h-4 w-4" />
-          Send
+          {isEditing ? "Save" : "Send"}
         </button>
       </div>
       <p className="text-xs text-slate-600">Drag & drop an image to attach</p>

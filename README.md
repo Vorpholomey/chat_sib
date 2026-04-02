@@ -1,85 +1,48 @@
-# Chat Backend
+# Chat (chat_sib)
 
-FastAPI backend for a web-based chat application: global room, private messaging, JWT auth, WebSockets, file uploads.
+Monorepo for a real-time web chat: **global room**, **private messaging**, **JWT authentication**, **file uploads**, **WebSockets**, and **moderation** (roles, public bans, pinned messages).
 
-## Tech Stack
+## Layout
 
-- **Python** 3.10+
-- **FastAPI**
-- **PostgreSQL** (primary DB) + **Redis** (planned for caching; WebSockets use in-memory manager)
-- **JWT** (access + refresh), **bcrypt** passwords
-- **SQLAlchemy 2.0** + **Alembic**
+| Directory | Role |
+|-----------|------|
+| [`backend/`](backend/) | FastAPI API, SQLAlchemy models, Alembic migrations, WebSocket hub |
+| [`frontend/`](frontend/) | React + TypeScript + Vite + Tailwind SPA |
 
-## Setup
+See **[`architecture.mdc`](architecture.mdc)** for a full architecture description (stack, data flow, modules, and configuration).
 
-1. **Create venv and install deps**
+## Quick start
 
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-   pip install -r requirements.txt
-   ```
+**Backend** (from repo root):
 
-2. **PostgreSQL**
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env          # edit DATABASE_URL* and SECRET_KEY
+alembic upgrade head
+uvicorn app.main:app --reload
+```
 
-   Create a database and set the URL (sync for Alembic, async for app):
+API: `http://127.0.0.1:8000` · OpenAPI: `/docs`
 
-   ```bash
-   createdb chat_db
-   ```
+**Frontend**:
 
-3. **Environment**
+```bash
+cd frontend
+npm install
+npm run dev -- --host
+```
 
-   Create `.env` from the example and set your DB user (required for app and Alembic):
+Dev UI: `http://127.0.0.1:5173` — Vite proxies `/api`, `/auth`, `/upload`, `/uploads`, and `/ws` to the backend on port 8000.
 
-   ```bash
-   cp .env.example .env
-   ```
+## Configuration note
 
-   Then edit `.env`: set `DATABASE_URL` and `DATABASE_URL_SYNC` to a PostgreSQL user that exists on your machine (see Troubleshooting if you get "role postgres does not exist"). Optionally set `SECRET_KEY`.
+Environment variables for the API live in **`backend/.env`** (see `backend/.env.example`). If you previously used a `.env` at the repository root, move or copy it into `backend/`.
 
-4. **Migrations**
+## Documentation
 
-   ```bash
-   alembic upgrade head
-   ```
-
-5. **Run**
-
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-   API: `http://127.0.0.1:8000`, docs: `http://127.0.0.1:8000/docs`.
-
-6. **Frontend (optional)**
-
-   ```bash
-   cd frontend && npm install && npm run dev
-   ```
-
-   Open `http://127.0.0.1:5173`. The Vite dev server proxies API and WebSocket calls to the backend on port 8000.
-
-## Troubleshooting
-
-**`role "postgres" does not exist`**  
-On macOS (e.g. Homebrew), PostgreSQL often creates a role with your **OS username**, not `postgres`. In `.env` set:
-
-- `DATABASE_URL=postgresql+asyncpg://YOUR_OS_USERNAME@localhost:5432/chat_db`
-- `DATABASE_URL_SYNC=postgresql://YOUR_OS_USERNAME@localhost:5432/chat_db`
-
-Use your Mac username (no password if you never set one). Then create the DB if needed: `createdb chat_db`, and run `alembic upgrade head` again.
-
-## API Overview
-
-- **Auth**: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`
-- **Users**: `GET /api/users` (sidebar: all other users + online flag)
-- **Upload**: `POST /upload` (returns URL for use in messages)
-- **Private**: `GET /api/private/me`, `GET /api/private/conversations`, `GET /api/private/messages/{user_id}?skip=0&limit=50`
-- **WebSocket**: `WS /ws/chat?token=<access_token>`
-  - On connect: last 1000 global messages are sent.
-  - Send global message: `{"text": "...", "content_type": "text"|"image"|"gif"}`.
-  - Send private message: `{"text": "...", "content_type": "...", "recipient_id": <int>}`.
-- **Static**: `GET /uploads/<filename>` serves uploaded files.
-
-All timestamps are stored and returned in UTC.
+- Backend setup and API overview: [`backend/README.md`](backend/README.md)
+- Frontend scripts and env: [`frontend/README.md`](frontend/README.md)
+- Architecture (full): [`architecture.mdc`](architecture.mdc)

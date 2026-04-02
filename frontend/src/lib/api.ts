@@ -1,7 +1,10 @@
 import axios from "axios";
+import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { API_BASE } from "./config";
 import { useAuthStore } from "../store/authStore";
+import type { ContentType } from "../types/chat";
+import type { UserRole } from "../types/user";
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -31,3 +34,98 @@ api.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+function errMessage(e: unknown): string {
+  const ax = e as AxiosError<{ detail?: string | unknown }>;
+  const d = ax.response?.data?.detail;
+  if (typeof d === "string") return d;
+  return ax.message || "Request failed";
+}
+
+export type CreateGlobalMessageBody = {
+  text: string;
+  content_type: ContentType;
+  reply_to_id?: number | null;
+};
+
+export type UpdateMessageBody = {
+  text?: string;
+  content_type?: ContentType;
+};
+
+export async function postGlobalMessage(body: CreateGlobalMessageBody) {
+  try {
+    const { data } = await api.post("/api/messages", body);
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function putMessage(
+  messageId: number | string,
+  body: UpdateMessageBody,
+  scope: "global" | "private"
+) {
+  try {
+    const { data } = await api.put(`/api/messages/${messageId}`, body, {
+      params: { scope },
+    });
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function deleteMessage(messageId: number | string, scope: "global" | "private") {
+  try {
+    await api.delete(`/api/messages/${messageId}`, { params: { scope } });
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function pinGlobalMessage(messageId: number | string) {
+  try {
+    const { data } = await api.post(`/api/messages/${messageId}/pin`);
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function unpinGlobalMessage(messageId: number | string) {
+  try {
+    const { data } = await api.delete(`/api/messages/${messageId}/pin`);
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export type BanDuration = "1h" | "24h" | "forever";
+
+export async function banUser(userId: number, duration: BanDuration) {
+  try {
+    const { data } = await api.post(`/api/users/${userId}/ban`, { duration });
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function setUserRole(userId: number, role: Exclude<UserRole, "admin">) {
+  try {
+    const { data } = await api.put(`/api/users/${userId}/role`, { role });
+    return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}

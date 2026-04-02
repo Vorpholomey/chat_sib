@@ -1,6 +1,7 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { wsChatUrl } from "../lib/config";
+import { globalPayloadToLine, privatePayloadToLine } from "../lib/messageMap";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
 import type { ChatLine, ContentType } from "../types/chat";
@@ -9,44 +10,103 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-function parseIncoming(data: unknown): ChatLine | "skip" | { error: string } {
+function parseIncoming(
+  data: unknown,
+  meId: number | undefined
+): ChatLine | "skip" | { error: string } | { kind: "updated"; line: ChatLine; scope: "global" | { peerId: number } } | { kind: "deleted"; id: number; scope: "global" | { peerId: number } } | { kind: "pin"; line: ChatLine | null } {
   if (!isRecord(data)) return "skip";
   if (typeof data.error === "string") {
     return { error: data.error };
   }
-  // Global message
-  if (typeof data.user_id === "number" && typeof data.username === "string") {
-    const ct = (data.content_type as string) || "text";
-    const contentType = (["text", "image", "gif"].includes(ct) ? ct : "text") as ContentType;
-    return {
-      id: data.id as number,
-      at: (data.created_at as string) || new Date().toISOString(),
-      author: data.username as string,
-      body: (data.text as string) ?? "",
-      contentType,
-      senderId: data.user_id as number,
-    };
+
+  const t = data.type as string | undefined;
+
+  if (t === "message_updated") {
+    const raw = (data.message ?? data.payload ?? data) as Record<string, unknown>;
+    if (typeof raw.user_id === "number" && typeof raw.username === "string") {
+      return {
+        kind: "updated",
+        line: globalPayloadToLine(raw, meId),
+        scope: "global",
+      };
+    }
+    if (
+      typeof raw.sender_id === "number" &&
+      typeof raw.recipient_id === "number"
+    ) {
+      const other =
+        meId != null
+          ? raw.sender_id === meId
+            ? (raw.recipient_id as number)
+            : (raw.sender_id as number)
+          : (raw.recipient_id as number);
+      return {
+        kind: "updated",
+        line: privatePayloadToLine(raw, meId),
+        scope: { peerId: other },
+      };
+    }
+    return "skip";
   }
+
+  if (t === "message_deleted") {
+    const id = (data.id ?? data.message_id) as number | undefined;
+    if (typeof id !== "number") return "skip";
+    const scopeRaw = data.scope as string | undefined;
+    if (scopeRaw === "private" || data.recipient_id != null || data.sender_id != null) {
+      const sid = data.sender_id as number | undefined;
+      const rid = data.recipient_id as number | undefined;
+      if (sid != null && rid != null && meId != null) {
+        const other = sid === meId ? rid : sid;
+        return { kind: "deleted", id, scope: { peerId: other } };
+      }
+      if (typeof data.peer_id === "number") {
+        return { kind: "deleted", id, scope: { peerId: data.peer_id } };
+      }
+    }
+    return { kind: "deleted", id, scope: "global" };
+  }
+
+  if (t === "pin_changed") {
+    const pinned = data.pinned_message ?? data.message ?? null;
+    if (pinned == null || pinned === false) {
+      return { kind: "pin", line: null };
+    }
+    if (isRecord(pinned) && typeof pinned.user_id === "number") {
+      return {
+        kind: "pin",
+        line: globalPayloadToLine(pinned, meId),
+      };
+    }
+    return { kind: "pin", line: null };
+  }
+
+  // New global message (legacy or explicit type)
+  if (
+    t === undefined ||
+    t === "message" ||
+    t === "global_message" ||
+    t === "chat_message"
+  ) {
+    if (typeof data.user_id === "number" && typeof data.username === "string") {
+      return globalPayloadToLine(data, meId);
+    }
+  }
+
   // Private message
   if (
     typeof data.sender_id === "number" &&
     typeof data.recipient_id === "number" &&
     typeof data.content === "string"
   ) {
-    const ct = (data.message_type as string) || "text";
-    const contentType = (["text", "image", "gif"].includes(ct) ? ct : "text") as ContentType;
-    const author =
-      (data.username as string | undefined) || `user#${data.sender_id}`;
-    return {
-      id: data.id as number,
-      at: (data.created_at as string) || new Date().toISOString(),
-      author,
-      body: data.content,
-      contentType,
-      senderId: data.sender_id,
-      recipientId: data.recipient_id,
-    };
+    return privatePayloadToLine(data, meId);
   }
+
+  // Untyped global (original heuristic)
+  if (typeof data.user_id === "number" && typeof data.username === "string") {
+    return globalPayloadToLine(data, meId);
+  }
+
   return "skip";
 }
 
@@ -55,7 +115,11 @@ export function useChatSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
   const attemptRef = useRef(0);
+  const connectRef = useRef<() => void>(() => {});
   const addLine = useChatStore((s) => s.addLine);
+  const replaceLineById = useChatStore((s) => s.replaceLineById);
+  const removeLineById = useChatStore((s) => s.removeLineById);
+  const setPinnedGlobalMessage = useChatStore((s) => s.setPinnedGlobalMessage);
 
   const clearTimer = () => {
     if (reconnectTimer.current != null) {
@@ -82,19 +146,51 @@ export function useChatSocket() {
     ws.onmessage = (ev) => {
       try {
         const raw = JSON.parse(ev.data as string);
-        const parsed = parseIncoming(raw);
+        const me = useAuthStore.getState().user?.id;
+        const parsed = parseIncoming(raw, me);
         if (parsed === "skip") return;
         if ("error" in parsed) {
           toast.error(parsed.error);
           return;
         }
-        const line = parsed;
-        // Route private messages to the correct thread (both participants)
+        if ("kind" in parsed) {
+          if (parsed.kind === "updated") {
+            const list =
+              parsed.scope === "global"
+                ? useChatStore.getState().globalLines
+                : useChatStore.getState().privateLines[parsed.scope.peerId] ?? [];
+            const exists = list.some((l) => String(l.id) === String(parsed.line.id));
+            if (exists) {
+              replaceLineById(parsed.line.id, parsed.scope, parsed.line);
+            } else {
+              addLine(parsed.line, parsed.scope);
+            }
+            return;
+          }
+          if (parsed.kind === "deleted") {
+            removeLineById(parsed.id, parsed.scope);
+            const pin = useChatStore.getState().pinnedGlobalMessage;
+            if (
+              parsed.scope === "global" &&
+              pin &&
+              String(pin.id) === String(parsed.id)
+            ) {
+              setPinnedGlobalMessage(null);
+            }
+            return;
+          }
+          if (parsed.kind === "pin") {
+            setPinnedGlobalMessage(parsed.line);
+            return;
+          }
+        }
+
+        const line = parsed as ChatLine;
         if (line.senderId != null && line.recipientId != null) {
-          const me = useAuthStore.getState().user?.id;
-          if (!me) return;
+          const meNow = useAuthStore.getState().user?.id;
+          if (!meNow) return;
           const other =
-            line.senderId === me ? line.recipientId : line.senderId;
+            line.senderId === meNow ? line.recipientId : line.senderId;
           const prev = useChatStore.getState().privateLines[other] ?? [];
           if (prev.some((l) => l.id === line.id)) return;
           addLine(line, { peerId: other });
@@ -117,13 +213,17 @@ export function useChatSocket() {
       const attempt = attemptRef.current + 1;
       attemptRef.current = attempt;
       const delay = Math.min(1000 * 2 ** Math.min(attempt, 5), 30_000);
-      reconnectTimer.current = window.setTimeout(() => connect(), delay);
+      reconnectTimer.current = window.setTimeout(() => connectRef.current(), delay);
     };
 
     ws.onerror = () => {
       /* onclose will reconnect */
     };
-  }, [token, addLine]);
+  }, [token, addLine, replaceLineById, removeLineById, setPinnedGlobalMessage]);
+
+  useLayoutEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     if (!token) {
@@ -148,43 +248,52 @@ export function useChatSocket() {
   }, [token, connect]);
 
   const sendGlobal = useCallback(
-    (text: string, contentType: ContentType) => {
+    (text: string, contentType: ContentType, replyToId?: number | null) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         toast.error("Not connected. Retrying…");
         return;
       }
-      ws.send(JSON.stringify({ text, content_type: contentType }));
+      const payload: Record<string, unknown> = {
+        text,
+        content_type: contentType,
+      };
+      if (replyToId != null) {
+        payload.reply_to_id = replyToId;
+      }
+      ws.send(JSON.stringify(payload));
     },
     []
   );
 
   const sendPrivate = useCallback(
-    (recipientId: number, text: string, contentType: ContentType) => {
+    (recipientId: number, text: string, contentType: ContentType, replyToId?: number | null) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         toast.error("Not connected. Retrying…");
         return;
       }
-      ws.send(
-        JSON.stringify({
-          text,
-          content_type: contentType,
-          recipient_id: recipientId,
-        })
-      );
+      const payload: Record<string, unknown> = {
+        text,
+        content_type: contentType,
+        recipient_id: recipientId,
+      };
+      if (replyToId != null) {
+        payload.reply_to_id = replyToId;
+      }
+      ws.send(JSON.stringify(payload));
     },
     []
   );
 
   const sendActive = useCallback(
-    (text: string, contentType: ContentType) => {
+    (text: string, contentType: ContentType, replyToId?: number | null) => {
       const mode = useChatStore.getState().mode;
       const p = useChatStore.getState().peerId;
       if (mode === "private" && p != null) {
-        sendPrivate(p, text, contentType);
+        sendPrivate(p, text, contentType, replyToId);
       } else {
-        sendGlobal(text, contentType);
+        sendGlobal(text, contentType, replyToId);
       }
     },
     [sendGlobal, sendPrivate]

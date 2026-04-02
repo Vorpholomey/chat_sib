@@ -1,9 +1,12 @@
 import { LogOut, MessageSquare, Users } from "lucide-react";
+import type { UserRole } from "../types/user";
+import { RoleBadge } from "./RoleBadge";
 
 type Props = {
   title: string;
   subtitle?: string;
   username: string;
+  userRole?: UserRole;
   onLogout: () => void;
   onOpenConversations: () => void;
   onBackGlobal?: () => void;
@@ -14,6 +17,7 @@ export function ChatHeader({
   title,
   subtitle,
   username,
+  userRole,
   onLogout,
   onOpenConversations,
   onBackGlobal,
@@ -47,6 +51,7 @@ export function ChatHeader({
       <div className="flex items-center gap-2">
         <Users className="h-4 w-4 text-slate-500" />
         <span className="max-w-[140px] truncate text-sm text-slate-300">{username}</span>
+        {userRole && <RoleBadge role={userRole} />}
       </div>
       <button
         type="button"
