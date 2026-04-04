@@ -1,13 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Ban, MoreHorizontal, Pencil, Pin, Reply, Trash2 } from "lucide-react";
+import { Ban, Pencil, Pin, Reply, Trash2 } from "lucide-react";
 import { assetUrl } from "../lib/config";
-import {
-  computeFloatingMenuLeft,
-  computeFloatingMenuTopInitial,
-  computeFloatingMenuTopRefined,
-} from "../lib/floatingMenuPosition";
-import { formatTime, lineKey } from "../store/chatStore";
+import { usernameColorFromUser } from "../lib/usernameColor";
+import { positionMenuNearPointInBounds } from "../lib/floatingMenuPosition";
+import { formatTimeHm, lineKey } from "../store/chatStore";
 import type { ChatLine, ChatMode } from "../types/chat";
 import type { UserRole } from "../types/user";
 import { RoleBadge } from "./RoleBadge";
@@ -32,6 +29,7 @@ type Props = {
 
 /** Matches prior `min-w-[10rem]` so positioning clamps correctly. */
 const MESSAGE_MENU_MIN_W = 160;
+const ESTIMATED_MENU_H = 180;
 
 function roleRank(r: UserRole | undefined): number {
   if (r === "admin") return 3;
@@ -56,24 +54,32 @@ export function MessageThread({
   onBanFromMessage,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const menuAnchorRef = useRef<DOMRect | null>(null);
   const [menuId, setMenuId] = useState<string | number | null>(null);
   const [menuFixed, setMenuFixed] = useState<{ top: number; left: number } | null>(null);
 
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLUListElement | null>(null);
 
   const openLine = menuId != null ? lines.find((l) => l.id === menuId) : undefined;
 
   useLayoutEffect(() => {
     if (menuId === null || !menuFixed) return;
-    const btn = triggerRef.current;
     const menu = menuRef.current;
-    if (!btn || !menu) return;
-    const rect = btn.getBoundingClientRect();
-    const h = menu.offsetHeight;
-    const top = computeFloatingMenuTopRefined(rect, h);
-    setMenuFixed((prev) => (prev && prev.top !== top ? { ...prev, top } : prev));
-    // menuFixed omitted on purpose: only re-measure when menu target line changes
+    const bounds = threadRef.current?.getBoundingClientRect();
+    const anchor = menuAnchorRef.current;
+    if (!menu || !bounds || !anchor) return;
+    const { left, top } = positionMenuNearPointInBounds(
+      anchor.x,
+      anchor.y,
+      menu.offsetWidth,
+      menu.offsetHeight,
+      bounds
+    );
+    setMenuFixed((prev) => {
+      if (!prev || (prev.left === left && prev.top === top)) return prev;
+      return { left, top };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuId, openLine?.id]);
 
@@ -88,11 +94,13 @@ export function MessageThread({
       if (el && !el.closest("[data-message-actions-menu]")) {
         setMenuId(null);
         setMenuFixed(null);
+        menuAnchorRef.current = null;
       }
     };
     const closeOnScroll = () => {
       setMenuId(null);
       setMenuFixed(null);
+      menuAnchorRef.current = null;
     };
     document.addEventListener("mousedown", onDocDown);
     window.addEventListener("scroll", closeOnScroll, true);
@@ -107,25 +115,33 @@ export function MessageThread({
   const canMod = isModerator || isAdmin;
   const isGlobal = mode === "global";
 
-  const openMenuForLine = (line: ChatLine, e: React.MouseEvent<HTMLButtonElement>) => {
+  const openContextMenu = (line: ChatLine, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    const bounds = threadRef.current?.getBoundingClientRect();
+    if (!bounds) return;
     if (menuId === line.id) {
       setMenuId(null);
       setMenuFixed(null);
+      menuAnchorRef.current = null;
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMenuFixed({
-      left: computeFloatingMenuLeft(rect, MESSAGE_MENU_MIN_W),
-      top: computeFloatingMenuTopInitial(rect, 180),
-    });
+    menuAnchorRef.current = new DOMRect(e.clientX, e.clientY, 0, 0);
+    const { left, top } = positionMenuNearPointInBounds(
+      e.clientX,
+      e.clientY,
+      MESSAGE_MENU_MIN_W,
+      ESTIMATED_MENU_H,
+      bounds
+    );
+    setMenuFixed({ left, top });
     setMenuId(line.id);
   };
 
   const closeMenu = () => {
     setMenuId(null);
     setMenuFixed(null);
+    menuAnchorRef.current = null;
   };
 
   /** Menu flags for the line whose menu is open (portal). */
@@ -133,9 +149,10 @@ export function MessageThread({
     ? (() => {
         const line = openLine;
         const own =
-          currentUserId != null &&
-          line.senderId != null &&
-          line.senderId === currentUserId;
+          line.isOwn === true ||
+          (currentUserId != null &&
+            line.senderId != null &&
+            line.senderId === currentUserId);
         const authorIsElevated = roleRank(line.authorRole) >= 2;
         const showModDelete =
           canMod &&
@@ -173,16 +190,20 @@ export function MessageThread({
     : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2">
+    <div
+      ref={threadRef}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2"
+    >
       {lines.length === 0 ? (
         <p className="m-auto text-center text-sm text-slate-500">{emptyHint}</p>
       ) : (
-        <ul className="space-y-2 pr-1">
+        <ul className="pr-1">
           {lines.map((line) => {
             const own =
-              currentUserId != null &&
-              line.senderId != null &&
-              line.senderId === currentUserId;
+              line.isOwn === true ||
+              (currentUserId != null &&
+                line.senderId != null &&
+                line.senderId === currentUserId);
             const authorIsElevated = roleRank(line.authorRole) >= 2;
             const showModDelete =
               canMod &&
@@ -209,8 +230,6 @@ export function MessageThread({
             const allowOwnDelete =
               own && (!isGlobal || !globalRoomBanned) && onDeleteOwn;
 
-            const menuOpen = menuId === line.id;
-
             const hasMenu =
               onReply ||
               allowOwnEdit ||
@@ -223,60 +242,100 @@ export function MessageThread({
             return (
               <li
                 key={lineKey(line)}
-                className="group relative text-sm leading-relaxed text-slate-200"
+                className="group relative mb-3 text-sm leading-relaxed text-slate-200 last:mb-0"
+                onContextMenu={hasMenu ? (e) => openContextMenu(line, e) : undefined}
               >
-                {line.replyTo && (
-                  <div className="mb-1 ml-2 border-l-2 border-slate-600 pl-2 text-xs text-slate-500">
-                    <span className="text-slate-400">{line.replyTo.username}</span>
-                    <span className="line-clamp-2 block text-slate-500">
-                      {line.replyTo.text}
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <span className="font-mono text-xs text-slate-500">
-                      {formatTime(line.at)}
-                    </span>{" "}
-                    <span className="font-semibold text-violet-300">{line.author}</span>
-                    {line.authorRole && (
-                      <>
-                        {" "}
-                        <RoleBadge role={line.authorRole} />
-                      </>
-                    )}
-                    {line.editedAt && (
-                      <span className="text-xs italic text-slate-500"> (edited)</span>
-                    )}
-                    <span className="text-slate-500">:</span>{" "}
-                    {line.contentType === "text" ? (
-                      <span className="whitespace-pre-wrap break-words">{line.body}</span>
-                    ) : (
-                      <span className="inline-block align-top">
-                        <span className="text-slate-400">[image]</span>
-                        <img
-                          src={assetUrl(line.body)}
-                          alt=""
-                          className="mt-1 max-h-64 max-w-full rounded border border-slate-700 object-contain"
-                        />
-                      </span>
-                    )}
-                  </div>
-                  {hasMenu && (
+                <div
+                  className={`flex w-full min-w-0 items-center gap-2 ${
+                    own ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  {onReply && own && (
                     <div
-                      className="relative shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
-                      data-message-actions-menu
+                      className="relative order-first flex shrink-0 items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
                     >
                       <button
-                        ref={menuOpen ? triggerRef : undefined}
                         type="button"
-                        className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
-                        aria-expanded={menuOpen}
-                        aria-haspopup="menu"
-                        aria-label="Message actions"
-                        onClick={(e) => openMenuForLine(line, e)}
+                        className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
+                        aria-label="Reply"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onReply(line);
+                        }}
                       >
-                        <MoreHorizontal className="h-4 w-4" />
+                        <Reply className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div
+                    className={`flex w-max min-w-0 max-w-[66.666%] flex-col gap-1 rounded-xl border px-3 py-2.5 ${
+                      own
+                        ? "border-violet-800/35 bg-violet-950/35 text-slate-100"
+                        : "border-slate-700/80 bg-slate-800/75 text-slate-200"
+                    }`}
+                  >
+                    {line.replyTo && (
+                      <div className="mb-1 border-l-2 border-slate-600/80 pl-2 text-left text-xs text-slate-500">
+                        <span
+                          className="font-bold"
+                          style={{
+                            color: usernameColorFromUser(line.replyTo.id, line.replyTo.username),
+                          }}
+                        >
+                          {line.replyTo.username}
+                        </span>
+                        <span className="line-clamp-2 block text-slate-500">
+                          {line.replyTo.text}
+                        </span>
+                      </div>
+                    )}
+                    {!own && (
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-left text-xs text-slate-500">
+                        <span
+                          className="font-bold"
+                          style={{
+                            color: usernameColorFromUser(line.senderId, line.author),
+                          }}
+                        >
+                          {line.author}
+                        </span>
+                        {line.authorRole && <RoleBadge role={line.authorRole} />}
+                        {line.editedAt && <span className="italic">(edited)</span>}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      {line.contentType === "text" ? (
+                        <span className="whitespace-pre-wrap break-words">{line.body}</span>
+                      ) : (
+                        <span className="inline-block align-top">
+                          <span className="text-slate-400">[image]</span>
+                          <img
+                            src={assetUrl(line.body)}
+                            alt=""
+                            className="mt-1 max-h-64 max-w-full rounded border border-slate-700 object-contain"
+                          />
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-right text-xs text-slate-500">
+                      <span className="font-mono tabular-nums">{formatTimeHm(line.at)}</span>
+                      {own && line.editedAt && (
+                        <span className="ml-1.5 italic">· edited</span>
+                      )}
+                    </div>
+                  </div>
+                  {onReply && !own && (
+                    <div className="relative flex shrink-0 items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
+                        aria-label="Reply"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onReply(line);
+                        }}
+                      >
+                        <Reply className="h-4 w-4" />
                       </button>
                     </div>
                   )}
