@@ -18,9 +18,17 @@ from app.services.message import (
     get_last_global_messages,
     create_global_message,
     create_private_message,
+    get_private_message_by_id,
     global_message_to_response,
     private_message_to_response,
     get_pinned_message_payload,
+)
+from app.services.reactions import (
+    reactions_dict_global,
+    reactions_dict_private,
+    reactions_map_global,
+    toggle_global_reaction,
+    toggle_private_reaction,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,8 +83,13 @@ async def websocket_global_chat(
                 pin_payload["type"] = "pin_changed"
                 await websocket.send_text(json.dumps(pin_payload))
                 history = await get_last_global_messages(db, limit=1000)
+                mids = [m.id for m in history]
+                rmap = await reactions_map_global(db, mids)
                 for msg in history:
-                    await websocket.send_text(json.dumps(global_message_to_response(msg)))
+                    r = rmap.get(msg.id)
+                    await websocket.send_text(
+                        json.dumps(global_message_to_response(msg, reactions=r))
+                    )
             except Exception as e:
                 logger.exception("Failed to send pin/history: %s", e)
             await db.commit()
@@ -87,6 +100,90 @@ async def websocket_global_chat(
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
+                continue
+
+            msg_type = data.get("type")
+            if msg_type == "reaction_toggle":
+                message_id = data.get("message_id")
+                reaction_kind = data.get("reaction_kind")
+                scope = (data.get("scope") or "global").lower()
+                if not isinstance(message_id, int):
+                    await websocket.send_text(json.dumps({"error": "message_id required"}))
+                    continue
+                if not isinstance(reaction_kind, str):
+                    await websocket.send_text(json.dumps({"error": "reaction_kind required"}))
+                    continue
+                async with async_session_maker() as db:
+                    try:
+                        fresh_result = await db.execute(select(User).where(User.id == user.id))
+                        db_user = fresh_result.scalar_one_or_none()
+                        if not db_user or not db_user.is_active:
+                            await websocket.send_text(json.dumps({"error": "Unauthorized"}))
+                            continue
+                        if scope == "private":
+                            peer_id = data.get("peer_id")
+                            if not isinstance(peer_id, int):
+                                await websocket.send_text(json.dumps({"error": "peer_id required for private"}))
+                                continue
+                            if peer_id == db_user.id:
+                                await websocket.send_text(json.dumps({"error": "Invalid peer"}))
+                                continue
+                            pm = await get_private_message_by_id(db, message_id)
+                            if not pm:
+                                await websocket.send_text(json.dumps({"error": "Message not found"}))
+                                continue
+                            if db_user.id not in (pm.sender_id, pm.recipient_id):
+                                await websocket.send_text(json.dumps({"error": "Forbidden"}))
+                                continue
+                            other = pm.sender_id if db_user.id == pm.recipient_id else pm.recipient_id
+                            if peer_id != other:
+                                await websocket.send_text(json.dumps({"error": "Forbidden"}))
+                                continue
+                            try:
+                                rd, sid, rid = await toggle_private_reaction(
+                                    db, db_user.id, message_id, reaction_kind
+                                )
+                            except ValueError as ve:
+                                await websocket.send_text(json.dumps({"error": str(ve)}))
+                                continue
+                            except LookupError:
+                                await websocket.send_text(json.dumps({"error": "Message not found"}))
+                                continue
+                            except PermissionError:
+                                await websocket.send_text(json.dumps({"error": "Forbidden"}))
+                                continue
+                            await db.commit()
+                            payload = {
+                                "type": "reactions_updated",
+                                "scope": "private",
+                                "message_id": message_id,
+                                "sender_id": sid,
+                                "recipient_id": rid,
+                                "reactions": rd,
+                            }
+                            await ws_manager.send_personal(sid, payload)
+                            await ws_manager.send_personal(rid, payload)
+                        else:
+                            try:
+                                rd = await toggle_global_reaction(db, db_user.id, message_id, reaction_kind)
+                            except ValueError as ve:
+                                await websocket.send_text(json.dumps({"error": str(ve)}))
+                                continue
+                            except LookupError:
+                                await websocket.send_text(json.dumps({"error": "Message not found"}))
+                                continue
+                            await db.commit()
+                            payload = {
+                                "type": "reactions_updated",
+                                "scope": "global",
+                                "message_id": message_id,
+                                "reactions": rd,
+                            }
+                            await ws_manager.broadcast(payload)
+                    except Exception as e:
+                        await db.rollback()
+                        logger.exception("reaction_toggle: %s", e)
+                        await websocket.send_text(json.dumps({"error": "Failed to toggle reaction"}))
                 continue
 
             text = data.get("text") or data.get("content") or ""
@@ -125,8 +222,11 @@ async def websocket_global_chat(
                         except ValueError as ve:
                             await websocket.send_text(json.dumps({"error": str(ve)}))
                             continue
+                        r_priv = await reactions_dict_private(db, msg.id)
                         await db.commit()
-                        payload = private_message_to_response(msg, username=db_user.username)
+                        payload = private_message_to_response(
+                            msg, username=db_user.username, reactions=r_priv
+                        )
                         await ws_manager.send_personal(recipient_id, payload)
                         await websocket.send_text(json.dumps(payload))
                     else:
@@ -144,8 +244,9 @@ async def websocket_global_chat(
                         except ValueError as ve:
                             await websocket.send_text(json.dumps({"error": str(ve)}))
                             continue
+                        r_glob = await reactions_dict_global(db, msg.id)
                         await db.commit()
-                        payload = global_message_to_response(msg)
+                        payload = global_message_to_response(msg, reactions=r_glob)
                         await ws_manager.broadcast(payload)
                 except Exception as e:
                     await db.rollback()

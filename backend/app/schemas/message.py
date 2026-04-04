@@ -5,6 +5,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+# Keys: thumbs_up | thumbs_down | heart | fire | joy → list of user ids
+ReactionMap = dict[str, list[int]]
+
 from app.models.global_message import MessageType
 
 
@@ -24,6 +27,7 @@ class GlobalMessageResponse(BaseModel):
     edited_at: Optional[datetime] = None
     reply_to_id: Optional[int] = None
     reply_to: Optional[dict[str, Any]] = None
+    reactions: Optional[ReactionMap] = None
 
     model_config = {"from_attributes": True}
 
@@ -56,6 +60,7 @@ class PrivateMessageResponse(BaseModel):
     edited_at: Optional[datetime] = None
     reply_to_id: Optional[int] = None
     reply_to: Optional[dict[str, Any]] = None
+    reactions: Optional[ReactionMap] = None
 
     model_config = {"from_attributes": True}
 

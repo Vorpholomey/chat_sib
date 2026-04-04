@@ -6,7 +6,9 @@ import { usernameColorFromUser } from "../lib/usernameColor";
 import { positionMenuNearPointInBounds } from "../lib/floatingMenuPosition";
 import { formatTimeHm, lineKey } from "../store/chatStore";
 import type { ChatLine, ChatMode } from "../types/chat";
+import { normalizeReactions, type ReactionKind } from "../types/reactions";
 import type { UserRole } from "../types/user";
+import { MessageReactionChips, ReactionPickerControl } from "./MessageReactions";
 import { RoleBadge } from "./RoleBadge";
 
 type Props = {
@@ -25,6 +27,7 @@ type Props = {
   onModDelete?: (line: ChatLine) => void;
   onPin?: (line: ChatLine) => void;
   onBanFromMessage?: (userId: number, username: string) => void;
+  onReactionToggle?: (messageId: string | number, kind: ReactionKind) => void;
 };
 
 /** Matches prior `min-w-[10rem]` so positioning clamps correctly. */
@@ -52,13 +55,13 @@ export function MessageThread({
   onModDelete,
   onPin,
   onBanFromMessage,
+  onReactionToggle,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const menuAnchorRef = useRef<DOMRect | null>(null);
   const [menuId, setMenuId] = useState<string | number | null>(null);
   const [menuFixed, setMenuFixed] = useState<{ top: number; left: number } | null>(null);
-
   const menuRef = useRef<HTMLUListElement | null>(null);
 
   const openLine = menuId != null ? lines.find((l) => l.id === menuId) : undefined;
@@ -239,6 +242,8 @@ export function MessageThread({
               showBan ||
               banLocked;
 
+            const reactions = normalizeReactions(line.reactions);
+
             return (
               <li
                 key={lineKey(line)}
@@ -252,7 +257,7 @@ export function MessageThread({
                 >
                   {onReply && own && (
                     <div
-                      className="relative order-first flex shrink-0 items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
+                      className="relative order-first flex shrink-0 flex-col items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
                     >
                       <button
                         type="button"
@@ -265,6 +270,14 @@ export function MessageThread({
                       >
                         <Reply className="h-4 w-4" />
                       </button>
+                      <ReactionPickerControl
+                        reactions={reactions}
+                        currentUserId={currentUserId}
+                        own={own}
+                        panelAlign="left"
+                        boundsRef={threadRef}
+                        onToggle={(kind) => onReactionToggle?.(line.id, kind)}
+                      />
                     </div>
                   )}
                   <div
@@ -317,6 +330,24 @@ export function MessageThread({
                         </span>
                       )}
                     </div>
+                    <MessageReactionChips
+                      reactions={reactions}
+                      currentUserId={currentUserId}
+                      own={own}
+                      onToggle={(kind) => onReactionToggle?.(line.id, kind)}
+                    />
+                    {!onReply && (
+                      <div className="mt-1.5 flex justify-end">
+                        <ReactionPickerControl
+                          reactions={reactions}
+                          currentUserId={currentUserId}
+                          own={own}
+                          panelAlign="right"
+                          boundsRef={threadRef}
+                          onToggle={(kind) => onReactionToggle?.(line.id, kind)}
+                        />
+                      </div>
+                    )}
                     <div className="mt-0.5 text-right text-xs text-slate-500">
                       <span className="font-mono tabular-nums">{formatTimeHm(line.at)}</span>
                       {own && line.editedAt && (
@@ -325,7 +356,7 @@ export function MessageThread({
                     </div>
                   </div>
                   {onReply && !own && (
-                    <div className="relative flex shrink-0 items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                    <div className="relative flex shrink-0 flex-col items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
                       <button
                         type="button"
                         className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
@@ -337,6 +368,14 @@ export function MessageThread({
                       >
                         <Reply className="h-4 w-4" />
                       </button>
+                      <ReactionPickerControl
+                        reactions={reactions}
+                        currentUserId={currentUserId}
+                        own={own}
+                        panelAlign="right"
+                        boundsRef={threadRef}
+                        onToggle={(kind) => onReactionToggle?.(line.id, kind)}
+                      />
                     </div>
                   )}
                 </div>

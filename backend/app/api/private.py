@@ -23,6 +23,7 @@ from app.services.message import (
     private_message_to_response,
     private_message_to_rest_dict,
 )
+from app.services.reactions import empty_reactions_dict, reactions_map_private
 from app.services.user import get_user_by_id
 
 router = APIRouter(prefix="/api/private", tags=["private"])
@@ -68,9 +69,15 @@ async def create_private_message_rest(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     await db.commit()
-    ws_payload = private_message_to_response(msg, username=msg.sender.username if msg.sender else current_user.username)
+    ws_payload = private_message_to_response(
+        msg,
+        username=msg.sender.username if msg.sender else current_user.username,
+        reactions=empty_reactions_dict(),
+    )
     await notify_private_event(ws_payload, [msg.sender_id, msg.recipient_id])
-    return PrivateMessageResponse.model_validate(private_message_to_rest_dict(msg))
+    return PrivateMessageResponse.model_validate(
+        private_message_to_rest_dict(msg, reactions=empty_reactions_dict())
+    )
 
 
 @router.get("/messages/{user_id}", response_model=list[PrivateMessageResponse])
@@ -88,4 +95,11 @@ async def get_messages_with_user(
     if not other:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     messages = await get_private_messages(db, current_user.id, user_id, skip=skip, limit=limit)
-    return [PrivateMessageResponse.model_validate(private_message_to_rest_dict(m)) for m in reversed(messages)]
+    ids = [m.id for m in messages]
+    rmap = await reactions_map_private(db, ids)
+    return [
+        PrivateMessageResponse.model_validate(
+            private_message_to_rest_dict(m, reactions=rmap.get(m.id))
+        )
+        for m in reversed(messages)
+    ]

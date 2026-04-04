@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_moderator_or_admin
-from app.db.session import get_db
+from app.db.session import async_session_maker, get_db
 from app.models.user import User
 from app.models.global_message import MessageType
 from app.schemas.message import (
@@ -30,6 +30,11 @@ from app.services.message import (
     update_private_message,
     delete_private_message,
     notify_private_event,
+)
+from app.services.reactions import (
+    empty_reactions_dict,
+    reactions_dict_global,
+    reactions_dict_private,
 )
 
 router = APIRouter(prefix="/messages", tags=["messages"])
@@ -66,7 +71,9 @@ async def create_global_rest(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
     await db.commit()
-    return GlobalMessageResponse.model_validate(global_message_to_rest_dict(msg))
+    return GlobalMessageResponse.model_validate(
+        global_message_to_rest_dict(msg, reactions=empty_reactions_dict())
+    )
 
 
 @router.put("/{message_id}")
@@ -90,7 +97,10 @@ async def update_message(
             raise _http_from_message_exc(e) from e
         await db.commit()
         await broadcast_global_updated(msg)
-        return {**global_message_to_rest_dict(msg), "type": "message_updated"}
+        async with async_session_maker() as s:
+            r = await reactions_dict_global(s, msg.id)
+            await s.commit()
+        return {**global_message_to_rest_dict(msg, reactions=r), "type": "message_updated"}
     try:
         msg = await update_private_message(
             db,
@@ -102,9 +112,14 @@ async def update_message(
     except (LookupError, PermissionError) as e:
         raise _http_from_message_exc(e) from e
     await db.commit()
-    ws_payload = private_message_to_response(msg, username=msg.sender.username, message_type="message_updated")
+    async with async_session_maker() as s:
+        r = await reactions_dict_private(s, msg.id)
+        await s.commit()
+    ws_payload = private_message_to_response(
+        msg, username=msg.sender.username, message_type="message_updated", reactions=r
+    )
     await notify_private_event(ws_payload, [msg.sender_id, msg.recipient_id])
-    return {**private_message_to_rest_dict(msg), "type": "message_updated"}
+    return {**private_message_to_rest_dict(msg, reactions=r), "type": "message_updated"}
 
 
 @router.delete("/{message_id}")

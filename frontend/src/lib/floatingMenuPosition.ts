@@ -72,3 +72,42 @@ export function positionMenuNearPointInBounds(
 
   return { left, top };
 }
+
+/**
+ * Places a small panel above a trigger rect (e.g. reaction button), aligned to the
+ * trigger’s left or right edge, then clamps so the panel stays inside `bounds`
+ * (e.g. the chat thread scroll area).
+ */
+export function positionPanelAboveAnchorInBounds(
+  anchor: DOMRect,
+  panelWidth: number,
+  panelHeight: number,
+  bounds: DOMRect,
+  align: "left" | "right"
+): { left: number; top: number } {
+  const gap = FLOATING_MENU_GAP;
+  const margin = 4;
+
+  let left =
+    align === "right" ? anchor.right - panelWidth : anchor.left;
+
+  if (left + panelWidth > bounds.right - gap) {
+    left = bounds.right - panelWidth - gap;
+  }
+  if (left < bounds.left + gap) {
+    left = bounds.left + gap;
+  }
+
+  let top = anchor.top - panelHeight - margin;
+  if (top < bounds.top + gap) {
+    top = anchor.bottom + margin;
+  }
+  if (top + panelHeight > bounds.bottom - gap) {
+    top = Math.max(bounds.top + gap, bounds.bottom - gap - panelHeight);
+  }
+  if (top < bounds.top + gap) {
+    top = bounds.top + gap;
+  }
+
+  return { left, top };
+}

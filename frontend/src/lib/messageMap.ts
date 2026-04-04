@@ -1,4 +1,5 @@
 import type { ChatLine, ContentType, ReplyRef } from "../types/chat";
+import { normalizeReactions } from "../types/reactions";
 import type { UserRole } from "../types/user";
 
 function asContentType(v: unknown): ContentType {
@@ -37,6 +38,10 @@ export function globalPayloadToLine(
       : typeof data.updated_at === "string"
         ? data.updated_at
         : undefined;
+  const reactions =
+    data.reactions != null && typeof data.reactions === "object"
+      ? normalizeReactions(data.reactions as Record<string, number[]>)
+      : undefined;
   return {
     id: data.id as number,
     at: (data.created_at as string) || new Date().toISOString(),
@@ -48,6 +53,7 @@ export function globalPayloadToLine(
     editedAt,
     isOwn: meId != null && uid === meId,
     authorRole: parseAuthorRole(data.author_role),
+    reactions,
   };
 }
 
@@ -63,6 +69,7 @@ export function privateApiToLine(
     edited_at?: string;
     reply_to?: unknown;
     author_role?: unknown;
+    reactions?: Record<string, number[]>;
   },
   meId: number,
   peerUsername: string
@@ -79,6 +86,7 @@ export function privateApiToLine(
       reply_to: m.reply_to,
       author_role: m.author_role,
       username: m.sender_id === meId ? "You" : peerUsername,
+      reactions: m.reactions,
     },
     meId,
     peerUsername
@@ -106,6 +114,10 @@ export function privatePayloadToLine(
       : typeof data.updated_at === "string"
         ? data.updated_at
         : undefined;
+  const reactions =
+    data.reactions != null && typeof data.reactions === "object"
+      ? normalizeReactions(data.reactions as Record<string, number[]>)
+      : undefined;
   return {
     id: data.id as number,
     at: (data.created_at as string) || new Date().toISOString(),
@@ -118,5 +130,6 @@ export function privatePayloadToLine(
     editedAt,
     isOwn: meId != null && sid === meId,
     authorRole: parseAuthorRole(data.author_role),
+    reactions,
   };
 }

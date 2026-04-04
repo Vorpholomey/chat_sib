@@ -65,7 +65,7 @@ export function ChatPage() {
   const removeLineById = useChatStore((s) => s.removeLineById);
   const setPinnedGlobalMessage = useChatStore((s) => s.setPinnedGlobalMessage);
 
-  const { sendActive } = useChatSocket();
+  const { sendActive, sendReactionToggle } = useChatSocket();
 
   const [users, setUsers] = useState<SidebarUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
@@ -303,6 +303,16 @@ export function ChatPage() {
             onPin={mode === "global" && mod ? (line) => void handlePin(line) : undefined}
             onBanFromMessage={(userId, username) =>
               setBanTarget({ id: userId, username })
+            }
+            onReactionToggle={
+              accessToken
+                ? (messageId, kind) => {
+                    const id =
+                      typeof messageId === "number" ? messageId : Number(messageId);
+                    if (!Number.isFinite(id)) return;
+                    sendReactionToggle(id, kind);
+                  }
+                : undefined
             }
           />
           <MessageInput

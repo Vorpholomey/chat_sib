@@ -1,3 +1,4 @@
+import type { MessageReactionState } from "./reactions";
 import type { UserRole } from "./user";
 
 export type ContentType = "text" | "image" | "gif";
@@ -28,6 +29,8 @@ export type ChatLine = {
   isOwn?: boolean;
   /** Author role when API/WS sends it (moderation UI) */
   authorRole?: UserRole;
+  /** Server-synced emoji reactions (user ids per kind); merged from WebSocket/API */
+  reactions?: MessageReactionState;
 };
 
 export type SidebarUser = {

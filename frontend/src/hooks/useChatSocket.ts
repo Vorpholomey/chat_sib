@@ -5,6 +5,8 @@ import { globalPayloadToLine, privatePayloadToLine } from "../lib/messageMap";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
 import type { ChatLine, ContentType } from "../types/chat";
+import { normalizeReactions } from "../types/reactions";
+import type { ReactionKind } from "../types/reactions";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -13,7 +15,19 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function parseIncoming(
   data: unknown,
   meId: number | undefined
-): ChatLine | "skip" | { error: string } | { kind: "updated"; line: ChatLine; scope: "global" | { peerId: number } } | { kind: "deleted"; id: number; scope: "global" | { peerId: number } } | { kind: "pin"; line: ChatLine | null } {
+):
+  | ChatLine
+  | "skip"
+  | { error: string }
+  | { kind: "updated"; line: ChatLine; scope: "global" | { peerId: number } }
+  | { kind: "deleted"; id: number; scope: "global" | { peerId: number } }
+  | { kind: "pin"; line: ChatLine | null }
+  | {
+      kind: "reactions_updated";
+      messageId: number;
+      scope: "global" | { peerId: number };
+      reactions: ReturnType<typeof normalizeReactions>;
+    } {
   if (!isRecord(data)) return "skip";
   if (typeof data.error === "string") {
     return { error: data.error };
@@ -81,6 +95,30 @@ function parseIncoming(
     return { kind: "pin", line: null };
   }
 
+  if (t === "reactions_updated") {
+    const messageId = data.message_id;
+    const scopeRaw = data.scope as string | undefined;
+    if (typeof messageId !== "number") return "skip";
+    const reactions = normalizeReactions(
+      isRecord(data.reactions) ? (data.reactions as Record<string, number[]>) : undefined
+    );
+    if (scopeRaw === "private") {
+      const sid = data.sender_id;
+      const rid = data.recipient_id;
+      if (typeof sid !== "number" || typeof rid !== "number" || meId == null) {
+        return "skip";
+      }
+      const peerId = meId === sid ? rid : sid;
+      return {
+        kind: "reactions_updated",
+        messageId,
+        scope: { peerId },
+        reactions,
+      };
+    }
+    return { kind: "reactions_updated", messageId, scope: "global", reactions };
+  }
+
   // New global message (legacy or explicit type)
   if (
     t === undefined ||
@@ -120,6 +158,7 @@ export function useChatSocket() {
   const replaceLineById = useChatStore((s) => s.replaceLineById);
   const removeLineById = useChatStore((s) => s.removeLineById);
   const setPinnedGlobalMessage = useChatStore((s) => s.setPinnedGlobalMessage);
+  const updateLineById = useChatStore((s) => s.updateLineById);
 
   const clearTimer = () => {
     if (reconnectTimer.current != null) {
@@ -183,6 +222,13 @@ export function useChatSocket() {
             setPinnedGlobalMessage(parsed.line);
             return;
           }
+          if (parsed.kind === "reactions_updated") {
+            updateLineById(parsed.messageId, parsed.scope, (l) => ({
+              ...l,
+              reactions: parsed.reactions,
+            }));
+            return;
+          }
         }
 
         const line = parsed as ChatLine;
@@ -219,7 +265,7 @@ export function useChatSocket() {
     ws.onerror = () => {
       /* onclose will reconnect */
     };
-  }, [token, addLine, replaceLineById, removeLineById, setPinnedGlobalMessage]);
+  }, [token, addLine, replaceLineById, removeLineById, setPinnedGlobalMessage, updateLineById]);
 
   useLayoutEffect(() => {
     connectRef.current = connect;
@@ -299,5 +345,25 @@ export function useChatSocket() {
     [sendGlobal, sendPrivate]
   );
 
-  return { sendActive, sendGlobal, sendPrivate, wsRef };
+  const sendReactionToggle = useCallback((messageId: number, kind: ReactionKind) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      toast.error("Not connected. Retrying…");
+      return;
+    }
+    const mode = useChatStore.getState().mode;
+    const peerId = useChatStore.getState().peerId;
+    const payload: Record<string, unknown> = {
+      type: "reaction_toggle",
+      message_id: messageId,
+      reaction_kind: kind,
+      scope: mode === "private" ? "private" : "global",
+    };
+    if (mode === "private" && peerId != null) {
+      payload.peer_id = peerId;
+    }
+    ws.send(JSON.stringify(payload));
+  }, []);
+
+  return { sendActive, sendGlobal, sendPrivate, sendReactionToggle, wsRef };
 }

@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.websocket_manager import ws_manager
+from app.db.session import async_session_maker
 from app.models.chat_settings import ChatSettings
 from app.models.user import User, UserRole
 from app.models.global_message import GlobalMessage, MessageType
 from app.models.private_message import PrivateMessage
 from app.services import permissions
 from app.services.audit import log_action
+from app.services.reactions import reactions_dict_global, reactions_dict_private
 from app.schemas.message import (
     ConversationItem,
     ConversationInterlocutor,
@@ -108,9 +110,11 @@ def _reply_preview_private(msg: PrivateMessage) -> Optional[dict[str, Any]]:
     }
 
 
-def global_message_to_rest_dict(msg: GlobalMessage) -> dict[str, Any]:
+def global_message_to_rest_dict(
+    msg: GlobalMessage, *, reactions: Optional[dict[str, list[int]]] = None
+) -> dict[str, Any]:
     """REST-friendly dict with datetimes (not ISO strings)."""
-    return {
+    out: dict[str, Any] = {
         "id": msg.id,
         "user_id": msg.user_id,
         "username": msg.user.username if msg.user else "",
@@ -121,10 +125,15 @@ def global_message_to_rest_dict(msg: GlobalMessage) -> dict[str, Any]:
         "reply_to_id": msg.reply_to_id,
         "reply_to": _reply_preview_global(msg),
     }
+    if reactions is not None:
+        out["reactions"] = reactions
+    return out
 
 
-def private_message_to_rest_dict(msg: PrivateMessage) -> dict[str, Any]:
-    return {
+def private_message_to_rest_dict(
+    msg: PrivateMessage, *, reactions: Optional[dict[str, list[int]]] = None
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "id": msg.id,
         "sender_id": msg.sender_id,
         "recipient_id": msg.recipient_id,
@@ -136,9 +145,17 @@ def private_message_to_rest_dict(msg: PrivateMessage) -> dict[str, Any]:
         "reply_to_id": msg.reply_to_id,
         "reply_to": _reply_preview_private(msg),
     }
+    if reactions is not None:
+        out["reactions"] = reactions
+    return out
 
 
-def global_message_to_response(msg: GlobalMessage, *, message_type: str = "message") -> dict[str, Any]:
+def global_message_to_response(
+    msg: GlobalMessage,
+    *,
+    message_type: str = "message",
+    reactions: Optional[dict[str, list[int]]] = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "type": message_type,
         "id": msg.id,
@@ -151,10 +168,18 @@ def global_message_to_response(msg: GlobalMessage, *, message_type: str = "messa
         "reply_to_id": msg.reply_to_id,
         "reply_to": _reply_preview_global(msg),
     }
+    if reactions is not None:
+        out["reactions"] = reactions
     return out
 
 
-def private_message_to_response(msg: PrivateMessage, *, username: Optional[str] = None, message_type: str = "message") -> dict[str, Any]:
+def private_message_to_response(
+    msg: PrivateMessage,
+    *,
+    username: Optional[str] = None,
+    message_type: str = "message",
+    reactions: Optional[dict[str, list[int]]] = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "type": message_type,
         "id": msg.id,
@@ -170,6 +195,8 @@ def private_message_to_response(msg: PrivateMessage, *, username: Optional[str] 
     }
     if username is not None:
         out["username"] = username
+    if reactions is not None:
+        out["reactions"] = reactions
     return out
 
 
@@ -371,9 +398,10 @@ async def get_pinned_message_payload(db: AsyncSession) -> dict[str, Any]:
         settings.pinned_message_id = None
         await db.flush()
         return {"pinned_message_id": None, "pinned_message": None}
+    r = await reactions_dict_global(db, msg.id)
     return {
         "pinned_message_id": msg.id,
-        "pinned_message": global_message_to_response(msg, message_type="message"),
+        "pinned_message": global_message_to_response(msg, message_type="message", reactions=r),
     }
 
 
@@ -422,7 +450,12 @@ async def broadcast_pin_changed(db: AsyncSession) -> None:
 
 
 async def broadcast_global_updated(msg: GlobalMessage) -> None:
-    await ws_manager.broadcast(global_message_to_response(msg, message_type="message_updated"))
+    async with async_session_maker() as db:
+        r = await reactions_dict_global(db, msg.id)
+        await ws_manager.broadcast(
+            global_message_to_response(msg, message_type="message_updated", reactions=r)
+        )
+        await db.commit()
 
 
 async def broadcast_global_deleted(message_id: int) -> None:
