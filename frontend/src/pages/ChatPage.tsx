@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ChatHeader } from "../components/ChatHeader";
@@ -24,6 +24,7 @@ import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
 import type { ChatLine, SidebarUser } from "../types/chat";
+import type { ReactionKind } from "../types/reactions";
 import type { UserRole } from "../types/user";
 
 type PrivateMsgApi = {
@@ -61,6 +62,8 @@ export function ChatPage() {
   const setMode = useChatStore((s) => s.setMode);
   const setPeer = useChatStore((s) => s.setPeer);
   const setPrivateLines = useChatStore((s) => s.setPrivateLines);
+  const setGlobalLines = useChatStore((s) => s.setGlobalLines);
+  const setPinnedGlobalMessages = useChatStore((s) => s.setPinnedGlobalMessages);
   const resetChat = useChatStore((s) => s.reset);
   const replaceLineById = useChatStore((s) => s.replaceLineById);
   const removeLineById = useChatStore((s) => s.removeLineById);
@@ -83,6 +86,13 @@ export function ChatPage() {
   const mod = isModerator(user);
   const admin = isAdmin(user);
   const globalBanned = isPublicRoomBanned(user);
+  const permanentGlobalBan = user?.public_ban_permanent === true;
+
+  useEffect(() => {
+    if (!permanentGlobalBan) return;
+    setGlobalLines([]);
+    setPinnedGlobalMessages([]);
+  }, [permanentGlobalBan, setGlobalLines, setPinnedGlobalMessages]);
 
   useEffect(() => {
     if (accessToken && !user) {
@@ -156,12 +166,16 @@ export function ChatPage() {
   );
 
   const backGlobal = useCallback(() => {
+    if (permanentGlobalBan) {
+      toast.error("You no longer have access to global chat");
+      return;
+    }
     setMode("global");
     setPeer(null);
     setPeerName(null);
     setReplyTo(null);
     setEditingLine(null);
-  }, [setMode, setPeer]);
+  }, [permanentGlobalBan, setMode, setPeer]);
 
   const onLogout = () => {
     resetChat();
@@ -170,13 +184,90 @@ export function ChatPage() {
   };
 
   const lines =
-    mode === "private" && peerId != null ? privateLines[peerId] ?? [] : globalLines;
+    permanentGlobalBan && mode === "global"
+      ? []
+      : mode === "private" && peerId != null
+        ? privateLines[peerId] ?? []
+        : globalLines;
 
   const title =
     mode === "private" && peerName ? `Private — ${peerName}` : "Global chat";
 
   const messageScope = (): "global" | "private" =>
     mode === "private" && peerId != null ? "private" : "global";
+
+  const pinnedMessageIds = useMemo(
+    () => pinnedGlobalMessages.map((l) => l.id),
+    [pinnedGlobalMessages]
+  );
+
+  const handleDeleteLine = useCallback(
+    async (line: ChatLine) => {
+      const sc =
+        mode === "private" && peerId != null ? { peerId } : "global";
+      await deleteMessage(
+        line.id,
+        mode === "private" && peerId != null ? "private" : "global"
+      );
+      removeLineById(line.id, sc);
+    },
+    [mode, peerId, removeLineById]
+  );
+
+  const handleModDelete = useCallback(
+    async (line: ChatLine) => {
+      if (mode !== "global") return;
+      await deleteMessage(line.id, "global");
+      removeLineById(line.id, "global");
+    },
+    [mode, removeLineById]
+  );
+
+  const handlePin = useCallback(async (line: ChatLine) => {
+    await pinGlobalMessage(line.id);
+  }, []);
+
+  const onReplyLine = useCallback((line: ChatLine) => {
+    setEditingLine(null);
+    setReplyTo(line);
+  }, []);
+
+  const onEditOwnLine = useCallback((line: ChatLine) => {
+    setReplyTo(null);
+    setEditingLine(line);
+  }, []);
+
+  const onBanFromMessage = useCallback((userId: number, username: string) => {
+    setBanTarget({ id: userId, username });
+  }, []);
+
+  const onReactionToggleLine = useCallback(
+    (messageId: string | number, kind: ReactionKind) => {
+      if (!accessToken) return;
+      const id = typeof messageId === "number" ? messageId : Number(messageId);
+      if (!Number.isFinite(id)) return;
+      sendReactionToggle(id, kind);
+    },
+    [accessToken, sendReactionToggle]
+  );
+
+  const onOpenPrivateChatFromThread = useCallback(
+    (userId: number, username: string) => {
+      void openPrivateChatById(userId, username);
+    },
+    [openPrivateChatById]
+  );
+
+  const onSelectSidebarUser = useCallback(
+    (u: SidebarUser) => {
+      void openPrivate(u);
+    },
+    [openPrivate]
+  );
+
+  const onBanUserFromSidebar = useCallback((u: SidebarUser) => {
+    setBanTarget({ id: u.id, username: u.username });
+  }, []);
 
   const handleSubmitEdit = async (messageId: string | number, text: string) => {
     const sc = scope();
@@ -196,22 +287,6 @@ export function ChatPage() {
         editedAt: new Date().toISOString(),
       });
     }
-  };
-
-  const handleDeleteLine = async (line: ChatLine) => {
-    const sc = scope();
-    await deleteMessage(line.id, messageScope());
-    removeLineById(line.id, sc);
-  };
-
-  const handleModDelete = async (line: ChatLine) => {
-    if (mode !== "global") return;
-    await deleteMessage(line.id, "global");
-    removeLineById(line.id, "global");
-  };
-
-  const handlePin = async (line: ChatLine) => {
-    await pinGlobalMessage(line.id);
   };
 
   const activePinnedLine = pinnedGlobalMessages[pinnedPreviewIndex] ?? null;
@@ -250,6 +325,13 @@ export function ChatPage() {
     [mode, globalLines, user?.id, mergeGlobalLines]
   );
 
+  const onJumpToPinnedMessage = useCallback(
+    (id: string | number) => {
+      void goToPinnedMessage(id);
+    },
+    [goToPinnedMessage]
+  );
+
   const confirmBan = async () => {
     if (!banTarget) return;
     try {
@@ -278,7 +360,9 @@ export function ChatPage() {
         subtitle={
           mode === "private"
             ? "Messages are end-to-end stored on the server"
-            : "Everyone sees this room"
+            : permanentGlobalBan
+              ? "Global chat is not available for your account"
+              : "Everyone sees this room"
         }
         username={user?.username ?? "…"}
         userRole={user?.role}
@@ -292,17 +376,20 @@ export function ChatPage() {
         <UserSidebar
           users={users}
           selectedId={mode === "private" ? peerId : null}
-          onSelect={(u) => void openPrivate(u)}
+          onSelect={onSelectSidebarUser}
           loading={usersLoading}
           currentUserId={user?.id}
           isAdmin={admin}
           isModerator={mod}
-          onBanUser={(u) => setBanTarget({ id: u.id, username: u.username })}
+          onBanUser={onBanUserFromSidebar}
           onSetRole={admin ? onSetRole : undefined}
         />
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {mode === "global" && activePinnedLine && pinnedGlobalMessages.length > 0 && (
+          {mode === "global" &&
+            !permanentGlobalBan &&
+            activePinnedLine &&
+            pinnedGlobalMessages.length > 0 && (
             <PinnedMessageBar
               line={activePinnedLine}
               previewIndex={pinnedPreviewIndex + 1}
@@ -317,46 +404,31 @@ export function ChatPage() {
             emptyHint={
               mode === "private"
                 ? "No messages yet — say hi!"
-                : "No messages yet. Be the first!"
+                : permanentGlobalBan
+                  ? "You no longer have access to global chat. Use private messages from the conversations menu."
+                  : "No messages yet. Be the first!"
             }
             mode={mode}
             currentUserId={user?.id}
             globalRoomBanned={globalBanned}
             isModerator={mod}
             isAdmin={admin}
-            pinnedMessageIds={pinnedGlobalMessages.map((l) => l.id)}
+            pinnedMessageIds={pinnedMessageIds}
             scrollToMessageId={mode === "global" ? scrollToMessageId : null}
             onScrollToMessageDone={clearScrollToMessage}
             onJumpToMessage={
-              mode === "global" ? (id) => void goToPinnedMessage(id) : undefined
+              mode === "global" ? onJumpToPinnedMessage : undefined
             }
-            onReply={(line) => {
-              setEditingLine(null);
-              setReplyTo(line);
-            }}
-            onEditOwn={(line) => {
-              setReplyTo(null);
-              setEditingLine(line);
-            }}
-            onDeleteOwn={(line) => void handleDeleteLine(line)}
-            onModDelete={(line) => void handleModDelete(line)}
-            onPin={mode === "global" && mod ? (line) => void handlePin(line) : undefined}
-            onBanFromMessage={(userId, username) =>
-              setBanTarget({ id: userId, username })
-            }
-            onReactionToggle={
-              accessToken
-                ? (messageId, kind) => {
-                    const id =
-                      typeof messageId === "number" ? messageId : Number(messageId);
-                    if (!Number.isFinite(id)) return;
-                    sendReactionToggle(id, kind);
-                  }
-                : undefined
-            }
+            onReply={onReplyLine}
+            onEditOwn={onEditOwnLine}
+            onDeleteOwn={handleDeleteLine}
+            onModDelete={handleModDelete}
+            onPin={mode === "global" && mod ? handlePin : undefined}
+            onBanFromMessage={onBanFromMessage}
+            onReactionToggle={accessToken ? onReactionToggleLine : undefined}
             onOpenPrivateChat={
               mode === "global" && accessToken
-                ? (userId, username) => void openPrivateChatById(userId, username)
+                ? onOpenPrivateChatFromThread
                 : undefined
             }
           />

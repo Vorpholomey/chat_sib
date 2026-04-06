@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from html import unescape
+from urllib.parse import urlparse
 
 import bleach
 
@@ -49,6 +50,9 @@ def prepare_stored_message_content(content: str, message_type: MessageType) -> s
             raise ValueError("Message content is required")
         if len(out) > MAX_MESSAGE_CONTENT_LEN:
             raise ValueError("Message too long")
+        parsed = urlparse(out)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("Image URL must be http(s) with a valid host")
         return out
     out = sanitize_message_html(content)
     if is_effectively_empty_html(out):

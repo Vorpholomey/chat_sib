@@ -10,7 +10,14 @@ function asContentType(v: unknown): ContentType {
 function parseReplyTo(raw: unknown): ReplyRef | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as Record<string, unknown>;
-  const id = o.id;
+  const id =
+    typeof o.user_id === "number"
+      ? o.user_id
+      : typeof o.sender_id === "number"
+        ? o.sender_id
+        : typeof o.id === "number"
+          ? o.id
+          : undefined;
   if (typeof id !== "number") return undefined;
   const username = typeof o.username === "string" ? o.username : "…";
   const snippet =
@@ -18,7 +25,8 @@ function parseReplyTo(raw: unknown): ReplyRef | undefined {
     (typeof o.snippet === "string" && o.snippet) ||
     (typeof o.text === "string" && o.text) ||
     "";
-  return { id, username, text: snippet };
+  const contentType = asContentType(o.content_type ?? o.contentType);
+  return { id, username, text: snippet, contentType };
 }
 
 function parseAuthorRole(raw: unknown): UserRole | undefined {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import type { AxiosError } from "axios";
 import { useAuthStore } from "../store/authStore";
 
 export function LoginPage() {
@@ -15,8 +16,10 @@ export function LoginPage() {
       await login(email, password);
       toast.success("Welcome back");
       navigate("/", { replace: true });
-    } catch {
-      toast.error("Invalid email or password");
+    } catch (e) {
+      const ax = e as AxiosError<{ detail?: string }>;
+      const d = ax.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Invalid email or password");
     }
   };
 

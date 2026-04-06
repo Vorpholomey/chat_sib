@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import axios from "axios";
+import axios, { type AxiosError } from "axios";
+import { toast } from "sonner";
+import { ACCOUNT_PERMANENTLY_BANNED } from "../lib/authErrors";
 import { API_BASE } from "../lib/config";
 import type { UserRole } from "../types/user";
 
@@ -18,6 +20,7 @@ export type User = {
   role: UserRole;
   /** Public room ban — when backend exposes these on /api/private/me */
   public_ban_until?: string | null;
+  public_ban_permanent?: boolean;
   is_public_banned?: boolean;
 };
 
@@ -46,6 +49,7 @@ function parseUserPayload(data: unknown): User {
     created_at: (o.created_at as string) ?? "",
     role,
     public_ban_until: (o.public_ban_until as string | null | undefined) ?? undefined,
+    public_ban_permanent: Boolean(o.public_ban_permanent),
     is_public_banned: o.is_public_banned as boolean | undefined,
   };
 }
@@ -100,4 +104,23 @@ export const useAuthStore = create<AuthState>()(
       }),
     }
   )
+);
+
+raw.interceptors.response.use(
+  (r) => r,
+  (err: AxiosError<{ detail?: string }>) => {
+    const status = err.response?.status;
+    const detail = err.response?.data?.detail;
+    const url = String(err.config?.url ?? "");
+    if (
+      status === 403 &&
+      detail === ACCOUNT_PERMANENTLY_BANNED &&
+      !url.includes("/auth/login")
+    ) {
+      useAuthStore.getState().logout();
+      toast.error(detail);
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
 );

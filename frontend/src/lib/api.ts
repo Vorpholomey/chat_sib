@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
+import { ACCOUNT_PERMANENTLY_BANNED } from "./authErrors";
 import { API_BASE } from "./config";
 import { useAuthStore } from "../store/authStore";
 import type { ContentType } from "../types/chat";
@@ -26,7 +27,19 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status;
+    const detail = err.response?.data?.detail;
+    if (
+      status === 403 &&
+      typeof detail === "string" &&
+      detail === ACCOUNT_PERMANENTLY_BANNED
+    ) {
+      useAuthStore.getState().logout();
+      toast.error(detail);
+      window.location.href = "/login";
+      return Promise.reject(err);
+    }
+    if (status === 401) {
       useAuthStore.getState().logout();
       toast.error("Session expired. Please sign in again.");
       window.location.href = "/login";

@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyQue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth_constants import ACCOUNT_PERMANENTLY_BANNED
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User, UserRole
@@ -66,6 +67,11 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User is inactive",
+        )
+    if user.public_ban_permanent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ACCOUNT_PERMANENTLY_BANNED,
         )
     return user
 

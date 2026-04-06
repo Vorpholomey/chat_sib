@@ -280,6 +280,14 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
       if (!raw) return;
       let u = raw;
       if (!/^https?:\/\//i.test(u)) u = `https://${u}`;
+      let href: string;
+      try {
+        const parsed = new URL(u);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+        href = parsed.href;
+      } catch {
+        return;
+      }
       const el = divRef.current;
       if (!el) return;
       el.focus();
@@ -292,7 +300,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
           /* selection no longer valid */
         }
       }
-      document.execCommand("createLink", false, u);
+      document.execCommand("createLink", false, href);
       syncEmpty();
     };
 

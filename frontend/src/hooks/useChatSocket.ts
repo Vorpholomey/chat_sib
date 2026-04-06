@@ -1,5 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { toast } from "sonner";
+import { ACCOUNT_PERMANENTLY_BANNED } from "../lib/authErrors";
 import { wsChatUrl } from "../lib/config";
 import { globalPayloadToLine, privatePayloadToLine } from "../lib/messageMap";
 import { useAuthStore } from "../store/authStore";
@@ -161,11 +163,16 @@ export function useChatSocket() {
   const reconnectTimer = useRef<number | null>(null);
   const attemptRef = useRef(0);
   const connectRef = useRef<() => void>(() => {});
-  const addLine = useChatStore((s) => s.addLine);
-  const replaceLineById = useChatStore((s) => s.replaceLineById);
-  const removeLineById = useChatStore((s) => s.removeLineById);
-  const setPinnedGlobalMessages = useChatStore((s) => s.setPinnedGlobalMessages);
-  const updateLineById = useChatStore((s) => s.updateLineById);
+  const { addLine, replaceLineById, removeLineById, setPinnedGlobalMessages, updateLineById } =
+    useChatStore(
+      useShallow((s) => ({
+        addLine: s.addLine,
+        replaceLineById: s.replaceLineById,
+        removeLineById: s.removeLineById,
+        setPinnedGlobalMessages: s.setPinnedGlobalMessages,
+        updateLineById: s.updateLineById,
+      }))
+    );
 
   const clearTimer = () => {
     if (reconnectTimer.current != null) {
@@ -252,6 +259,12 @@ export function useChatSocket() {
     ws.onclose = (ev) => {
       if (ev.code === 4001) {
         toast.error("WebSocket: invalid token");
+        return;
+      }
+      if (ev.code === 4003) {
+        toast.error(ACCOUNT_PERMANENTLY_BANNED);
+        useAuthStore.getState().logout();
+        window.location.href = "/login";
         return;
       }
       if (!token) return;
@@ -364,5 +377,8 @@ export function useChatSocket() {
     ws.send(JSON.stringify(payload));
   }, []);
 
-  return { sendActive, sendGlobal, sendPrivate, sendReactionToggle, wsRef };
+  return useMemo(
+    () => ({ sendActive, sendGlobal, sendPrivate, sendReactionToggle, wsRef }),
+    [sendActive, sendGlobal, sendPrivate, sendReactionToggle]
+  );
 }

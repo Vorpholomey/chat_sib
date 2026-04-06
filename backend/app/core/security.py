@@ -39,7 +39,17 @@ def create_refresh_token(subject: str | int) -> str:
 
 def decode_token(token: str) -> Optional[dict[str, Any]]:
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "require_exp": True,
+                "require_sub": True,
+            },
+        )
         return payload
     except JWTError:
         return None

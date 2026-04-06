@@ -36,6 +36,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
 
 
+def _ws_value_error_client_message(exc: ValueError) -> str:
+    """Avoid leaking internal validation details to WebSocket clients."""
+    msg = str(exc)
+    if any(
+        msg.startswith(p)
+        for p in (
+            "Message ",
+            "reply_to_id",
+            "reply does not",
+            "invalid reaction",
+            "Image URL",
+        )
+    ):
+        return msg
+    return "Invalid request"
+
+
+async def _load_active_user(db: AsyncSession, user_id: int) -> Optional[User]:
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
+    return result.scalar_one_or_none()
+
+
 async def get_user_from_token(token: Optional[str]) -> Optional[User]:
     if not token:
         return None
@@ -49,7 +71,6 @@ async def get_user_from_token(token: Optional[str]) -> Optional[User]:
     async with async_session_maker() as db:
         result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
         user = result.scalar_one_or_none()
-        await db.commit()
     return user
 
 
@@ -59,7 +80,7 @@ async def websocket_global_chat(
     token: Optional[str] = Query(None),
 ):
     """Single WebSocket for global chat and private messages.
-    - Connect: ?token=JWT. Pin state, then last global messages (enriched).
+    - Connect: ?token=JWT. Permanently banned accounts cannot connect. Pin state + global history after connect.
     - Global: { "text", "content_type"?, "reply_to_id"? } — blocked if public-banned.
     - Private: { "text", "content_type"?, "recipient_id", "reply_to_id"? }.
     - Outgoing events use a `type` field: message, message_updated, message_deleted, pin_changed.
@@ -73,26 +94,31 @@ async def websocket_global_chat(
     if not user:
         await websocket.close(code=4001, reason="Invalid or missing token")
         return
+    if user.public_ban_permanent:
+        await websocket.close(code=4003, reason="Account permanently banned")
+        return
 
-    await ws_manager.connect(websocket, user.id)
+    receive_global = permissions.can_access_global_feed(user)
+    await ws_manager.connect(websocket, user.id, receive_global=receive_global)
 
     try:
-        async with async_session_maker() as db:
-            try:
-                pin_payload = await get_pinned_message_payload(db)
-                pin_payload["type"] = "pin_changed"
-                await websocket.send_text(json.dumps(pin_payload))
-                history = await get_last_global_messages(db, limit=1000)
-                mids = [m.id for m in history]
-                rmap = await reactions_map_global(db, mids)
-                for msg in history:
-                    r = rmap.get(msg.id)
-                    await websocket.send_text(
-                        json.dumps(global_message_to_response(msg, reactions=r))
-                    )
-            except Exception as e:
-                logger.exception("Failed to send pin/history: %s", e)
-            await db.commit()
+        if receive_global:
+            async with async_session_maker() as db:
+                try:
+                    pin_payload = await get_pinned_message_payload(db)
+                    pin_payload["type"] = "pin_changed"
+                    await websocket.send_text(json.dumps(pin_payload))
+                    history = await get_last_global_messages(db, limit=1000)
+                    mids = [m.id for m in history]
+                    rmap = await reactions_map_global(db, mids)
+                    for msg in history:
+                        r = rmap.get(msg.id)
+                        await websocket.send_text(
+                            json.dumps(global_message_to_response(msg, reactions=r))
+                        )
+                except Exception as e:
+                    logger.exception("Failed to send pin/history: %s", e)
+                await db.commit()
 
         while True:
             raw = await websocket.receive_text()
@@ -115,9 +141,8 @@ async def websocket_global_chat(
                     continue
                 async with async_session_maker() as db:
                     try:
-                        fresh_result = await db.execute(select(User).where(User.id == user.id))
-                        db_user = fresh_result.scalar_one_or_none()
-                        if not db_user or not db_user.is_active:
+                        db_user = await _load_active_user(db, user.id)
+                        if not db_user:
                             await websocket.send_text(json.dumps({"error": "Unauthorized"}))
                             continue
                         if scope == "private":
@@ -144,7 +169,9 @@ async def websocket_global_chat(
                                     db, db_user.id, message_id, reaction_kind
                                 )
                             except ValueError as ve:
-                                await websocket.send_text(json.dumps({"error": str(ve)}))
+                                await websocket.send_text(
+                                    json.dumps({"error": _ws_value_error_client_message(ve)})
+                                )
                                 continue
                             except LookupError:
                                 await websocket.send_text(json.dumps({"error": "Message not found"}))
@@ -164,10 +191,17 @@ async def websocket_global_chat(
                             await ws_manager.send_personal(sid, payload)
                             await ws_manager.send_personal(rid, payload)
                         else:
+                            if not permissions.can_access_global_feed(db_user):
+                                await websocket.send_text(
+                                    json.dumps({"error": "No access to global chat"})
+                                )
+                                continue
                             try:
                                 rd = await toggle_global_reaction(db, db_user.id, message_id, reaction_kind)
                             except ValueError as ve:
-                                await websocket.send_text(json.dumps({"error": str(ve)}))
+                                await websocket.send_text(
+                                    json.dumps({"error": _ws_value_error_client_message(ve)})
+                                )
                                 continue
                             except LookupError:
                                 await websocket.send_text(json.dumps({"error": "Message not found"}))
@@ -197,9 +231,8 @@ async def websocket_global_chat(
 
             async with async_session_maker() as db:
                 try:
-                    fresh_result = await db.execute(select(User).where(User.id == user.id))
-                    db_user = fresh_result.scalar_one_or_none()
-                    if not db_user or not db_user.is_active:
+                    db_user = await _load_active_user(db, user.id)
+                    if not db_user:
                         await websocket.send_text(json.dumps({"error": "Unauthorized"}))
                         continue
                     if recipient_id is not None:
@@ -216,7 +249,9 @@ async def websocket_global_chat(
                                 reply_to_id=reply_to_id,
                             )
                         except ValueError as ve:
-                            await websocket.send_text(json.dumps({"error": str(ve)}))
+                            await websocket.send_text(
+                                json.dumps({"error": _ws_value_error_client_message(ve)})
+                            )
                             continue
                         r_priv = await reactions_dict_private(db, msg.id)
                         await db.commit()
@@ -238,7 +273,9 @@ async def websocket_global_chat(
                                 reply_to_id=reply_to_id,
                             )
                         except ValueError as ve:
-                            await websocket.send_text(json.dumps({"error": str(ve)}))
+                            await websocket.send_text(
+                                json.dumps({"error": _ws_value_error_client_message(ve)})
+                            )
                             continue
                         r_glob = await reactions_dict_global(db, msg.id)
                         await db.commit()

@@ -21,6 +21,11 @@ def is_public_banned(user: User, now: datetime | None = None) -> bool:
     return False
 
 
+def can_access_global_feed(user: User) -> bool:
+    """Permanent public ban removes access to global room content and sidebar presence (DMs unchanged)."""
+    return not user.public_ban_permanent
+
+
 def can_send_global(user: User, now: datetime | None = None) -> bool:
     return not is_public_banned(user, now)
 

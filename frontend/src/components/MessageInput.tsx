@@ -7,8 +7,8 @@ import { api } from "../lib/api";
 import { assetUrl } from "../lib/config";
 import { isRichTextEmpty } from "../lib/richText";
 import type { ChatLine, ContentType } from "../types/chat";
-import { messagePlainPreview } from "../lib/richText";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
+import { ReplyQuotePreview } from "./ReplyQuotePreview";
 
 type Props = {
   onSendText: (text: string, type: ContentType, replyToId?: number | null) => void;
@@ -110,11 +110,12 @@ export function MessageInput({
         <div className="flex items-start gap-2 rounded border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs text-slate-300">
           <div className="min-w-0 flex-1">
             <span className="font-medium text-violet-300">Replying to {replyTo.author}</span>
-            <p className="line-clamp-2 text-slate-500">
-              {replyTo.contentType === "text"
-                ? messagePlainPreview(replyTo.body, 500)
-                : "[image]"}
-            </p>
+            <div className="text-slate-500">
+              <ReplyQuotePreview
+                contentType={replyTo.contentType}
+                text={replyTo.body}
+              />
+            </div>
           </div>
           <button
             type="button"

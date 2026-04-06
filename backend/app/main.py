@@ -5,22 +5,50 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from app.core.config import settings
 from app.api import auth, upload, private, websocket, users, messages, moderation
+
+
+def _cors_origins() -> list[str]:
+    parsed = settings.cors_origin_list()
+    if settings.debug:
+        return parsed or [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    return parsed
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
 
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(SecurityHeadersMiddleware)
+
+_cors = _cors_origins()
+if _cors:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
+    )
 
 app.include_router(auth.router)
 app.include_router(upload.router)

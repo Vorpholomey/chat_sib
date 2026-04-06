@@ -19,8 +19,12 @@ async def list_registered_users(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """All active users (for sidebar). Excludes current user. `online` reflects WebSocket presence."""
-    result = await db.execute(select(User).where(User.is_active == True).order_by(User.username))
+    """Active users for the sidebar, excluding permanently public-banned accounts (not listed in global chat)."""
+    result = await db.execute(
+        select(User)
+        .where(User.is_active == True, User.public_ban_permanent == False)
+        .order_by(User.username)
+    )
     users = list(result.scalars().all())
     items: list[UserListItem] = []
     for u in users:

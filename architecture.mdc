@@ -52,9 +52,10 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 | Area | Responsibility |
 |------|----------------|
-| `main.py` | App factory: CORS, routers, static mount for `/uploads`, `/health` |
-| `core/config.py` | Pydantic settings: DB URLs, JWT, upload limits; loads `backend/.env` |
-| `core/security.py` | Password hashing, JWT create/decode |
+| `main.py` | App factory: security headers middleware, explicit CORS origins (no `*` with credentials), routers, static mount for `/uploads`, `/health` |
+| `core/config.py` | Pydantic settings: DB URLs, JWT, `CORS_ORIGINS`, upload limits; rejects weak default `SECRET_KEY` when `DEBUG` is false; loads `backend/.env` |
+| `core/security.py` | Password hashing; JWT encode/decode with required `exp`/`sub` on decode |
+| `core/rate_limit.py` | In-process sliding-window limits for `/auth/login` and `/auth/register` (per server worker) |
 | `core/rich_text.py` | Bleach sanitization for HTML text messages (bold, italic, links, breaks) |
 | `core/websocket_manager.py` | Track connections per user id; broadcast helpers |
 | `db/` | Async engine/session, declarative `Base` |
@@ -67,22 +68,23 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 ### 2.3 Authentication and authorization
 
-- **Registration / login** issue access and refresh tokens; clients send **Bearer** access tokens on HTTP and pass the same token to the WebSocket (query `token=` or `Authorization` header).
+- **CORS** is configured with an explicit allowlist (`CORS_ORIGINS`, comma-separated). With `DEBUG=true`, local Vite origins are used if the list is empty. Browser `credentials` + wildcard origins are not used (invalid combination).
+- **Registration / login** issue access and refresh tokens; clients send **Bearer** access tokens on HTTP and pass the same token to the WebSocket (query `token=` or `Authorization` header). Login/register are rate-limited in-process per client IP. A **permanent** public chat ban (`public_ban_permanent`) blocks **login**, **token refresh**, and any **authenticated HTTP** call (`get_current_user`); the stable error string is `ACCOUNT_PERMANENTLY_BANNED` in `app/core/auth_constants.py` (aligned with the frontend).
 - **Users** have a **role** (`user`, `moderator`, `admin`) and optional **public chat ban** (`public_ban_until`, `public_ban_permanent`).
 - **Moderation** endpoints (under `/api`) restrict ban/role actions to appropriate roles; message edit/delete/pin flows check permissions in services.
 
 ### 2.4 WebSocket protocol (`/ws/chat`)
 
-- One connection per authenticated user; server sends **history** (global messages) and **pin state** after connect.
+- One connection per authenticated user; server sends **history** (global messages) and **pin state** after connect. **Permanently banned** accounts cannot open the socket (close code `4003`).
 - Inbound JSON can target the **global room** or a **private** peer via `recipient_id`.
 - Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`) so the client can branch without guessing shapes.
 
 ### 2.5 REST surface (conceptual)
 
 - **Auth**: register, login, refresh (prefix depends on router mounting — see OpenAPI `/docs`).
-- **Users / private**: sidebar user list, “me”, conversations, paged private history.
+- **Users / private**: sidebar user list (excludes accounts **permanently** banned from public chat), “me”, conversations, paged private history.
 - **Messages**: global CRUD, pin/unpin, and related broadcasts; private message updates as implemented in `messages` and `services.message`.
-- **Global context window**: `GET /api/messages/global/context?message_id=&before=&after=` returns a slice of global messages around an id (same payload shape as WebSocket history), used to jump to a pinned message that is not in the currently loaded client window (e.g. older than the last N messages).
+- **Global context window**: `GET /api/messages/global/context?message_id=&before=&after=` returns a slice of global messages around an id (same payload shape as WebSocket history), used to jump to a pinned message that is not in the currently loaded client window (e.g. older than the last N messages). **403** if the user is permanently banned from public chat.
 - **Upload**: multipart upload → public URL path under `/uploads/...`.
 - **Moderation**: ban user from public chat, change role (admin).
 

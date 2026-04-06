@@ -52,6 +52,11 @@ async def get_global_message_context(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Load a window of global messages around `message_id` (for jump-to / lazy history)."""
+    if not permissions.can_access_global_feed(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No access to global chat",
+        )
     msgs = await get_global_messages_near(db, message_id, before=before, after=after)
     if not msgs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")

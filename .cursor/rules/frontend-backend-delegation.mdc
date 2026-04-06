@@ -1,0 +1,26 @@
+---
+description: 
+alwaysApply: true
+---
+
+# Frontend / backend task splitting
+
+When a request touches **both** the UI (`frontend/`) and the server (`backend/`), **split it into separate frontend and backend tasks** instead of mixing everything in one pass.
+
+## Delegation
+
+- **Frontend-only** work (React/TS in `frontend/`, styling, hooks, client config): invoke **`/frontend-dev`** with a clear, self-contained prompt (goal, files or areas if known, acceptance criteria).
+- **Backend-only** work (FastAPI in `backend/`, DB, auth, WebSockets, APIs): invoke **`/backend-dev`** with the same level of specificity.
+
+## Ordering
+
+- If one side **blocks** the other (e.g. API shape must exist before the UI can call it), do **backend first**, then frontend—or state the dependency explicitly in each sub-task prompt.
+- If tasks are independent, they can be described in parallel; still keep **one agent focus per invocation**.
+
+## Examples
+
+- ❌ One vague prompt: “Add reply threading” spanning API, DB, and UI without saying what each layer does.
+- ✅ Backend task (`/backend-dev`): “Add `parent_id` on messages, migration, validate in send endpoint, include in WS payload.”
+- ✅ Frontend task (`/frontend-dev`): “Thread UI: indent replies, load parent preview, send `parent_id` from composer.”
+
+Purely local changes (only `frontend/` or only `backend/`) do not require splitting; use the matching slash command when specialist depth helps.

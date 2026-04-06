@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
 
+from app.core.auth_constants import ACCOUNT_PERMANENTLY_BANNED
 from app.core.security import (
     get_password_hash,
     verify_password,
@@ -21,11 +23,11 @@ from app.schemas.auth import Token
 async def register_user(db: AsyncSession, data: UserCreate) -> User:
     """Create user with hashed password. Raises if email/username taken."""
     existing = await db.execute(
-        select(User).where(
+        select(User.id).where(
             (User.email == data.email) | (User.username == data.username)
-        )
+        ).limit(1)
     )
-    if existing.scalar_one_or_none():
+    if existing.scalar_one_or_none() is not None:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Email or username already registered")
     user = User(
@@ -61,9 +63,17 @@ async def refresh_tokens(db: AsyncSession, refresh_token: str) -> Token | None:
     payload = decode_token(refresh_token)
     if not payload or payload.get("type") != "refresh" or "sub" not in payload:
         return None
-    user_id = int(payload["sub"])
+    try:
+        user_id = int(payload["sub"])
+    except (ValueError, TypeError):
+        return None
     result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user:
         return None
+    if user.public_ban_permanent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ACCOUNT_PERMANENTLY_BANNED,
+        )
     return create_tokens_for_user(user)

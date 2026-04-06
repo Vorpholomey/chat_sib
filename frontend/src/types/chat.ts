@@ -7,10 +7,13 @@ export type ChatMode = "global" | "private";
 
 /** Quote target for replies (matches backend reply_to / reply_to_id) */
 export type ReplyRef = {
+  /** Quoted author's user id (global: user_id, private: sender_id) */
   id: number;
   username: string;
-  /** Short preview of quoted text */
+  /** Snippet: plain text, or media path/URL for image/gif */
   text: string;
+  /** When set, drives reply preview (image URL lives in `text`) */
+  contentType?: ContentType;
 };
 
 /** Normalized row for UI */
