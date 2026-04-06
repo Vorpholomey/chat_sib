@@ -108,6 +108,26 @@ export async function unpinGlobalMessage(messageId: number | string) {
   }
 }
 
+/** Window of global messages around an id (same shape as WebSocket payloads). */
+export async function fetchGlobalMessageContext(
+  messageId: number | string,
+  opts?: { before?: number; after?: number }
+) {
+  try {
+    const { data } = await api.get<unknown[]>("/api/messages/global/context", {
+      params: {
+        message_id: messageId,
+        before: opts?.before ?? 50,
+        after: opts?.after ?? 50,
+      },
+    });
+    return data;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
 export type BanDuration = "1h" | "24h" | "forever";
 
 export async function banUser(userId: number, duration: BanDuration) {

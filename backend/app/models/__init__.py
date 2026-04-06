@@ -6,6 +6,7 @@ from app.models.private_message import PrivateMessage
 from app.models.chat_settings import ChatSettings
 from app.models.moderation_audit_log import ModerationAuditLog
 from app.models.message_reaction import GlobalMessageReaction, PrivateMessageReaction
+from app.models.global_pinned_message import GlobalPinnedMessage
 
 __all__ = [
     "User",
@@ -17,4 +18,5 @@ __all__ = [
     "ModerationAuditLog",
     "GlobalMessageReaction",
     "PrivateMessageReaction",
+    "GlobalPinnedMessage",
 ]

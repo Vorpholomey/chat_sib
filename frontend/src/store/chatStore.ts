@@ -7,14 +7,16 @@ type ChatState = {
   globalLines: ChatLine[];
   /** key = other user's id */
   privateLines: Record<number, ChatLine[]>;
-  /** Pinned global message (room-level); shown in sticky bar */
-  pinnedGlobalMessage: ChatLine | null;
+  /** Global room pins, server-ordered by message time (newest first). */
+  pinnedGlobalMessages: ChatLine[];
   setMode: (m: ChatMode) => void;
   setPeer: (id: number | null) => void;
   addLine: (line: ChatLine, scope: "global" | { peerId: number }) => void;
   setGlobalLines: (lines: ChatLine[]) => void;
+  /** Merge into global lines by id (for jump-to / loaded window around a message). */
+  mergeGlobalLines: (lines: ChatLine[]) => void;
   setPrivateLines: (peerId: number, lines: ChatLine[]) => void;
-  setPinnedGlobalMessage: (line: ChatLine | null) => void;
+  setPinnedGlobalMessages: (lines: ChatLine[]) => void;
   updateLineById: (
     id: string | number,
     scope: "global" | { peerId: number },
@@ -38,7 +40,7 @@ export const useChatStore = create<ChatState>((set) => ({
   peerId: null,
   globalLines: [],
   privateLines: {},
-  pinnedGlobalMessage: null,
+  pinnedGlobalMessages: [],
 
   setMode: (mode) => set({ mode }),
   setPeer: (peerId) => set({ peerId }),
@@ -55,12 +57,28 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setGlobalLines: (globalLines) => set({ globalLines }),
 
+  mergeGlobalLines: (incoming) =>
+    set((s) => {
+      const byId = new Map<string | number, ChatLine>();
+      for (const l of s.globalLines) {
+        byId.set(l.id, l);
+      }
+      for (const l of incoming) {
+        byId.set(l.id, l);
+      }
+      const merged = Array.from(byId.values());
+      merged.sort(
+        (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+      );
+      return { globalLines: merged };
+    }),
+
   setPrivateLines: (peerId, lines) =>
     set((s) => ({
       privateLines: { ...s.privateLines, [peerId]: lines },
     })),
 
-  setPinnedGlobalMessage: (pinnedGlobalMessage) => set({ pinnedGlobalMessage }),
+  setPinnedGlobalMessages: (pinnedGlobalMessages) => set({ pinnedGlobalMessages }),
 
   updateLineById: (id, scope, updater) =>
     set((s) => {
@@ -121,7 +139,7 @@ export const useChatStore = create<ChatState>((set) => ({
       peerId: null,
       globalLines: [],
       privateLines: {},
-      pinnedGlobalMessage: null,
+      pinnedGlobalMessages: [],
     }),
 }));
 

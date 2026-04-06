@@ -21,7 +21,7 @@ function parseIncoming(
   | { error: string }
   | { kind: "updated"; line: ChatLine; scope: "global" | { peerId: number } }
   | { kind: "deleted"; id: number; scope: "global" | { peerId: number } }
-  | { kind: "pin"; line: ChatLine | null }
+  | { kind: "pin"; lines: ChatLine[] }
   | {
       kind: "reactions_updated";
       messageId: number;
@@ -82,17 +82,24 @@ function parseIncoming(
   }
 
   if (t === "pin_changed") {
+    const rawList = data.pinned_messages;
+    if (Array.isArray(rawList)) {
+      const lines: ChatLine[] = [];
+      for (const item of rawList) {
+        if (isRecord(item) && typeof item.user_id === "number") {
+          lines.push(globalPayloadToLine(item, meId));
+        }
+      }
+      return { kind: "pin", lines };
+    }
     const pinned = data.pinned_message ?? data.message ?? null;
     if (pinned == null || pinned === false) {
-      return { kind: "pin", line: null };
+      return { kind: "pin", lines: [] };
     }
     if (isRecord(pinned) && typeof pinned.user_id === "number") {
-      return {
-        kind: "pin",
-        line: globalPayloadToLine(pinned, meId),
-      };
+      return { kind: "pin", lines: [globalPayloadToLine(pinned, meId)] };
     }
-    return { kind: "pin", line: null };
+    return { kind: "pin", lines: [] };
   }
 
   if (t === "reactions_updated") {
@@ -157,7 +164,7 @@ export function useChatSocket() {
   const addLine = useChatStore((s) => s.addLine);
   const replaceLineById = useChatStore((s) => s.replaceLineById);
   const removeLineById = useChatStore((s) => s.removeLineById);
-  const setPinnedGlobalMessage = useChatStore((s) => s.setPinnedGlobalMessage);
+  const setPinnedGlobalMessages = useChatStore((s) => s.setPinnedGlobalMessages);
   const updateLineById = useChatStore((s) => s.updateLineById);
 
   const clearTimer = () => {
@@ -208,18 +215,10 @@ export function useChatSocket() {
           }
           if (parsed.kind === "deleted") {
             removeLineById(parsed.id, parsed.scope);
-            const pin = useChatStore.getState().pinnedGlobalMessage;
-            if (
-              parsed.scope === "global" &&
-              pin &&
-              String(pin.id) === String(parsed.id)
-            ) {
-              setPinnedGlobalMessage(null);
-            }
             return;
           }
           if (parsed.kind === "pin") {
-            setPinnedGlobalMessage(parsed.line);
+            setPinnedGlobalMessages(parsed.lines);
             return;
           }
           if (parsed.kind === "reactions_updated") {
@@ -265,7 +264,7 @@ export function useChatSocket() {
     ws.onerror = () => {
       /* onclose will reconnect */
     };
-  }, [token, addLine, replaceLineById, removeLineById, setPinnedGlobalMessage, updateLineById]);
+  }, [token, addLine, replaceLineById, removeLineById, setPinnedGlobalMessages, updateLineById]);
 
   useLayoutEffect(() => {
     connectRef.current = connect;

@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { htmlToPlainPreview } from "../lib/richText";
 import { formatTime } from "../store/chatStore";
 
 type Conv = {
@@ -83,7 +84,9 @@ export function ConversationsModal({ open, onClose, onOpenChat }: Props) {
                       </div>
                     )}
                     {c.last_message && (
-                      <div className="truncate text-slate-400">{c.last_message}</div>
+                      <div className="truncate text-slate-400">
+                        {htmlToPlainPreview(c.last_message)}
+                      </div>
                     )}
                   </button>
                 </li>

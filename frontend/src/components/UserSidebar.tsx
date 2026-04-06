@@ -170,7 +170,9 @@ export function UserSidebar({
                       <span className="min-w-0 truncate font-medium text-slate-100">
                         {u.username}
                       </span>
-                      {u.role && <RoleBadge role={u.role} className="ml-1" />}
+                      {u.role && u.role !== "user" && (
+                        <RoleBadge role={u.role} className="ml-1" />
+                      )}
                       <span className="ml-auto shrink-0 text-xs text-slate-500">
                         {u.online ? "online" : "offline"}
                       </span>

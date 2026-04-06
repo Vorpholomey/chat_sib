@@ -1,6 +1,6 @@
 """Global and cross-scope message REST (create global, edit/delete with scope, pin)."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,9 @@ from app.services.message import (
     broadcast_pin_changed,
     create_global_message,
     delete_global_message,
+    get_global_messages_near,
     global_message_to_rest_dict,
+    global_message_to_response,
     pin_global_message,
     private_message_to_response,
     private_message_to_rest_dict,
@@ -35,9 +37,30 @@ from app.services.reactions import (
     empty_reactions_dict,
     reactions_dict_global,
     reactions_dict_private,
+    reactions_map_global,
 )
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+@router.get("/global/context")
+async def get_global_message_context(
+    message_id: Annotated[int, Query(..., ge=1, description="Anchor global message id")],
+    before: int = Query(50, ge=0, le=500, description="Rows before anchor (by id)"),
+    after: int = Query(50, ge=0, le=500, description="Rows after anchor (by id)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Load a window of global messages around `message_id` (for jump-to / lazy history)."""
+    msgs = await get_global_messages_near(db, message_id, before=before, after=after)
+    if not msgs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    mids = [m.id for m in msgs]
+    rmap = await reactions_map_global(db, mids)
+    return [
+        global_message_to_response(m, reactions=rmap.get(m.id))
+        for m in msgs
+    ]
 
 
 def _http_from_message_exc(exc: Exception) -> HTTPException:
@@ -136,6 +159,7 @@ async def delete_message(
             raise _http_from_message_exc(e) from e
         await db.commit()
         await broadcast_global_deleted(message_id)
+        await broadcast_pin_changed(db)
         return {"ok": True, "id": message_id, "scope": "global"}
     try:
         deleted_id, sender_id, recipient_id = await delete_private_message(db, message_id, current_user)

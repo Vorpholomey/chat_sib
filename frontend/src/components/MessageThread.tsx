@@ -9,6 +9,8 @@ import type { ChatLine, ChatMode } from "../types/chat";
 import { normalizeReactions, type ReactionKind } from "../types/reactions";
 import type { UserRole } from "../types/user";
 import { MessageReactionChips, ReactionPickerControl } from "./MessageReactions";
+import { messagePlainPreview } from "../lib/richText";
+import { MessageRichText } from "./MessageRichText";
 import { RoleBadge } from "./RoleBadge";
 
 type Props = {
@@ -20,7 +22,13 @@ type Props = {
   globalRoomBanned?: boolean;
   isModerator?: boolean;
   isAdmin?: boolean;
-  pinnedMessageId?: string | number | null;
+  /** Global message ids that are pinned (for pin marker / hide Pin in menu). */
+  pinnedMessageIds?: (string | number)[];
+  /** When set, scroll to this message (smooth, center), then highlight briefly. */
+  scrollToMessageId?: string | number | null;
+  onScrollToMessageDone?: () => void;
+  /** Jump to a message in the thread (e.g. pinned marker click). */
+  onJumpToMessage?: (messageId: string | number) => void;
   onReply?: (line: ChatLine) => void;
   onEditOwn?: (line: ChatLine) => void;
   onDeleteOwn?: (line: ChatLine) => void;
@@ -28,6 +36,8 @@ type Props = {
   onPin?: (line: ChatLine) => void;
   onBanFromMessage?: (userId: number, username: string) => void;
   onReactionToggle?: (messageId: string | number, kind: ReactionKind) => void;
+  /** Global chat only: open private chat with the user whose name was clicked */
+  onOpenPrivateChat?: (userId: number, username: string) => void;
 };
 
 /** Matches prior `min-w-[10rem]` so positioning clamps correctly. */
@@ -48,7 +58,10 @@ export function MessageThread({
   globalRoomBanned = false,
   isModerator = false,
   isAdmin = false,
-  pinnedMessageId,
+  pinnedMessageIds,
+  scrollToMessageId = null,
+  onScrollToMessageDone,
+  onJumpToMessage,
   onReply,
   onEditOwn,
   onDeleteOwn,
@@ -56,9 +69,15 @@ export function MessageThread({
   onPin,
   onBanFromMessage,
   onReactionToggle,
+  onOpenPrivateChat,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const prevLastLineIdRef = useRef<string | number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [highlightMessageId, setHighlightMessageId] = useState<string | number | null>(
+    null
+  );
   const menuAnchorRef = useRef<DOMRect | null>(null);
   const [menuId, setMenuId] = useState<string | number | null>(null);
   const [menuFixed, setMenuFixed] = useState<{ top: number; left: number } | null>(null);
@@ -87,8 +106,44 @@ export function MessageThread({
   }, [menuId, openLine?.id]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines.length]);
+    if (lines.length === 0) {
+      prevLastLineIdRef.current = null;
+      return;
+    }
+    const lastId = lines[lines.length - 1]!.id;
+    if (prevLastLineIdRef.current === null) {
+      prevLastLineIdRef.current = lastId;
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      return;
+    }
+    if (prevLastLineIdRef.current !== lastId) {
+      prevLastLineIdRef.current = lastId;
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [lines]);
+
+  useLayoutEffect(() => {
+    if (scrollToMessageId == null) return;
+    const el = threadRef.current?.querySelector<HTMLElement>(
+      `[data-chat-message-id="${String(scrollToMessageId)}"]`
+    );
+    if (!el) return;
+
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightMessageId(scrollToMessageId);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightMessageId(null);
+      highlightTimerRef.current = null;
+    }, 2000);
+    onScrollToMessageDone?.();
+  }, [scrollToMessageId, lines, onScrollToMessageDone]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (menuId === null) return;
@@ -163,8 +218,9 @@ export function MessageThread({
           !own &&
           line.authorRole !== "admin" &&
           line.senderId != null;
-        const showPin =
-          canMod && isGlobal && onPin && String(line.id) !== String(pinnedMessageId ?? "");
+        const isPinnedId =
+          pinnedMessageIds?.some((p) => String(p) === String(line.id)) ?? false;
+        const showPin = canMod && isGlobal && onPin && !isPinnedId;
         const showBan =
           canMod &&
           isGlobal &&
@@ -214,8 +270,9 @@ export function MessageThread({
               !own &&
               line.authorRole !== "admin" &&
               line.senderId != null;
-            const showPin =
-              canMod && isGlobal && onPin && String(line.id) !== String(pinnedMessageId ?? "");
+            const isPinnedIdRow =
+              pinnedMessageIds?.some((p) => String(p) === String(line.id)) ?? false;
+            const showPin = canMod && isGlobal && onPin && !isPinnedIdRow;
             const showBan =
               canMod &&
               isGlobal &&
@@ -243,10 +300,15 @@ export function MessageThread({
               banLocked;
 
             const reactions = normalizeReactions(line.reactions);
+            const isPinnedRow = isGlobal && isPinnedIdRow;
+            const isHighlighted =
+              highlightMessageId != null &&
+              String(highlightMessageId) === String(line.id);
 
             return (
               <li
                 key={lineKey(line)}
+                data-chat-message-id={String(line.id)}
                 className="group relative mb-3 text-sm leading-relaxed text-slate-200 last:mb-0"
                 onContextMenu={hasMenu ? (e) => openContextMenu(line, e) : undefined}
               >
@@ -281,44 +343,81 @@ export function MessageThread({
                     </div>
                   )}
                   <div
-                    className={`flex w-max min-w-0 max-w-[66.666%] flex-col gap-1 rounded-xl border px-3 py-2.5 ${
+                    className={`flex w-max min-w-0 max-w-[66.666%] flex-col gap-1 rounded-xl border px-3 py-2.5 transition-[box-shadow] duration-300 ${
                       own
                         ? "border-violet-800/35 bg-violet-950/35 text-slate-100"
                         : "border-slate-700/80 bg-slate-800/75 text-slate-200"
-                    }`}
+                    } ${isHighlighted ? "ring-2 ring-amber-400/85" : ""}`}
                   >
                     {line.replyTo && (
                       <div className="mb-1 border-l-2 border-slate-600/80 pl-2 text-left text-xs text-slate-500">
-                        <span
-                          className="font-bold"
-                          style={{
-                            color: usernameColorFromUser(line.replyTo.id, line.replyTo.username),
-                          }}
-                        >
-                          {line.replyTo.username}
-                        </span>
+                        {isGlobal &&
+                        onOpenPrivateChat &&
+                        line.replyTo.id !== currentUserId ? (
+                          <button
+                            type="button"
+                            className="font-bold hover:underline"
+                            style={{
+                              color: usernameColorFromUser(line.replyTo.id, line.replyTo.username),
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenPrivateChat(line.replyTo!.id, line.replyTo!.username);
+                            }}
+                          >
+                            {line.replyTo.username}
+                          </button>
+                        ) : (
+                          <span
+                            className="font-bold"
+                            style={{
+                              color: usernameColorFromUser(line.replyTo.id, line.replyTo.username),
+                            }}
+                          >
+                            {line.replyTo.username}
+                          </span>
+                        )}
                         <span className="line-clamp-2 block text-slate-500">
-                          {line.replyTo.text}
+                          {messagePlainPreview(line.replyTo.text, 500)}
                         </span>
                       </div>
                     )}
                     {!own && (
                       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-left text-xs text-slate-500">
-                        <span
-                          className="font-bold"
-                          style={{
-                            color: usernameColorFromUser(line.senderId, line.author),
-                          }}
-                        >
-                          {line.author}
-                        </span>
+                        {isGlobal &&
+                        onOpenPrivateChat &&
+                        line.senderId != null &&
+                        line.senderId !== currentUserId ? (
+                          <button
+                            type="button"
+                            className="font-bold hover:underline"
+                            style={{
+                              color: usernameColorFromUser(line.senderId, line.author),
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenPrivateChat(line.senderId!, line.author);
+                            }}
+                          >
+                            {line.author}
+                          </button>
+                        ) : (
+                          <span
+                            className="font-bold"
+                            style={{
+                              color: usernameColorFromUser(line.senderId, line.author),
+                            }}
+                          >
+                            {line.author}
+                          </span>
+                        )}
                         {line.authorRole && <RoleBadge role={line.authorRole} />}
                         {line.editedAt && <span className="italic">(edited)</span>}
                       </div>
                     )}
                     <div className="min-w-0">
                       {line.contentType === "text" ? (
-                        <span className="whitespace-pre-wrap break-words">{line.body}</span>
+                        <MessageRichText body={line.body} />
                       ) : (
                         <span className="inline-block align-top">
                           <span className="text-slate-400">[image]</span>
@@ -348,7 +447,21 @@ export function MessageThread({
                         />
                       </div>
                     )}
-                    <div className="mt-0.5 text-right text-xs text-slate-500">
+                    <div className="mt-0.5 flex items-center justify-end gap-2 text-right text-xs text-slate-500">
+                      {isPinnedRow && onJumpToMessage && (
+                        <button
+                          type="button"
+                          className="inline-flex shrink-0 items-center rounded p-0.5 text-amber-400/90 hover:bg-amber-950/40 hover:text-amber-300"
+                          aria-label="Scroll to pinned message"
+                          title="Scroll to this message"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onJumpToMessage(line.id);
+                          }}
+                        >
+                          <Pin className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <span className="font-mono tabular-nums">{formatTimeHm(line.at)}</span>
                       {own && line.editedAt && (
                         <span className="ml-1.5 italic">· edited</span>

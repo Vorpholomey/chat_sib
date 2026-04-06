@@ -5,19 +5,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import desc, select, or_, and_, delete
+from sqlalchemy import asc, desc, select, or_, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.rich_text import prepare_stored_message_content
 from app.core.websocket_manager import ws_manager
 from app.db.session import async_session_maker
 from app.models.chat_settings import ChatSettings
 from app.models.user import User, UserRole
 from app.models.global_message import GlobalMessage, MessageType
+from app.models.global_pinned_message import GlobalPinnedMessage
 from app.models.private_message import PrivateMessage
 from app.services import permissions
 from app.services.audit import log_action
-from app.services.reactions import reactions_dict_global, reactions_dict_private
+from app.services.reactions import reactions_dict_global, reactions_dict_private, reactions_map_global
 from app.schemas.message import (
     ConversationItem,
     ConversationInterlocutor,
@@ -69,6 +71,49 @@ async def get_global_message_by_id(db: AsyncSession, message_id: int) -> Optiona
         )
     )
     return result.scalar_one_or_none()
+
+
+_GLOBAL_MSG_LOAD = (
+    selectinload(GlobalMessage.user),
+    selectinload(GlobalMessage.reply_to).selectinload(GlobalMessage.user),
+)
+
+
+async def get_global_messages_near(
+    db: AsyncSession,
+    message_id: int,
+    *,
+    before: int = 50,
+    after: int = 50,
+) -> list[GlobalMessage]:
+    """Return global messages around `message_id` (by primary key order), inclusive of the center row."""
+    center = await get_global_message_by_id(db, message_id)
+    if center is None:
+        return []
+
+    older: list[GlobalMessage] = []
+    if before > 0:
+        r_old = await db.execute(
+            select(GlobalMessage)
+            .where(GlobalMessage.id < message_id)
+            .options(*_GLOBAL_MSG_LOAD)
+            .order_by(desc(GlobalMessage.id))
+            .limit(before)
+        )
+        older = list(reversed(r_old.scalars().all()))
+
+    newer: list[GlobalMessage] = []
+    if after > 0:
+        r_new = await db.execute(
+            select(GlobalMessage)
+            .where(GlobalMessage.id > message_id)
+            .options(*_GLOBAL_MSG_LOAD)
+            .order_by(asc(GlobalMessage.id))
+            .limit(after)
+        )
+        newer = list(r_new.scalars().all())
+
+    return older + [center] + newer
 
 
 async def get_private_message_by_id(db: AsyncSession, message_id: int) -> Optional[PrivateMessage]:
@@ -211,9 +256,10 @@ async def create_global_message(
         parent = await get_global_message_by_id(db, reply_to_id)
         if not parent:
             raise ValueError("reply_to_id not found")
+    stored = prepare_stored_message_content(content, message_type)
     msg = GlobalMessage(
         user_id=user_id,
-        content=content,
+        content=stored,
         message_type=message_type,
         reply_to_id=reply_to_id,
     )
@@ -240,10 +286,11 @@ async def create_private_message(
         participants = {parent.sender_id, parent.recipient_id}
         if sender_id not in participants or recipient_id not in participants:
             raise ValueError("reply does not belong to this conversation")
+    stored = prepare_stored_message_content(content, message_type)
     msg = PrivateMessage(
         sender_id=sender_id,
         recipient_id=recipient_id,
-        content=content,
+        content=stored,
         message_type=message_type,
         reply_to_id=reply_to_id,
     )
@@ -272,7 +319,7 @@ async def update_global_message(
         raise PermissionError("forbidden")
 
     old_preview = {"content": msg.content[:500], "message_type": msg.message_type.value}
-    msg.content = new_text
+    msg.content = prepare_stored_message_content(new_text, new_type)
     msg.message_type = new_type
     msg.edited_at = datetime.now(timezone.utc)
     await db.flush()
@@ -301,10 +348,6 @@ async def delete_global_message(db: AsyncSession, message_id: int, actor: User) 
         raise LookupError("not_found")
     if not permissions.can_delete_global_message(actor, author):
         raise PermissionError("forbidden")
-
-    settings = await get_or_create_chat_settings(db)
-    if settings.pinned_message_id == msg.id:
-        settings.pinned_message_id = None
 
     if actor.id != author.id:
         await log_action(
@@ -338,7 +381,7 @@ async def update_private_message(
         raise PermissionError("forbidden")
 
     old_preview = {"content": msg.content[:500], "message_type": msg.message_type.value}
-    msg.content = new_text
+    msg.content = prepare_stored_message_content(new_text, new_type)
     msg.message_type = new_type
     msg.edited_at = datetime.now(timezone.utc)
     await db.flush()
@@ -390,18 +433,38 @@ async def delete_private_message(db: AsyncSession, message_id: int, actor: User)
 
 
 async def get_pinned_message_payload(db: AsyncSession) -> dict[str, Any]:
-    settings = await get_or_create_chat_settings(db)
-    if not settings.pinned_message_id:
-        return {"pinned_message_id": None, "pinned_message": None}
-    msg = await get_global_message_by_id(db, settings.pinned_message_id)
-    if not msg:
-        settings.pinned_message_id = None
-        await db.flush()
-        return {"pinned_message_id": None, "pinned_message": None}
-    r = await reactions_dict_global(db, msg.id)
+    """Pin list order: by message creation time, newest first (not when the pin was added)."""
+    result = await db.execute(
+        select(GlobalPinnedMessage)
+        .join(GlobalMessage, GlobalPinnedMessage.message_id == GlobalMessage.id)
+        .options(
+            selectinload(GlobalPinnedMessage.message).selectinload(GlobalMessage.user),
+            selectinload(GlobalPinnedMessage.message).selectinload(
+                GlobalMessage.reply_to
+            ).selectinload(GlobalMessage.user),
+        )
+        .order_by(desc(GlobalMessage.created_at), desc(GlobalMessage.id))
+    )
+    rows = list(result.scalars().all())
+    msgs = [r.message for r in rows if r.message is not None]
+    if not msgs:
+        return {
+            "pinned_message_id": None,
+            "pinned_message": None,
+            "pinned_messages": [],
+            "pinned_message_ids": [],
+        }
+    mids = [m.id for m in msgs]
+    rmap = await reactions_map_global(db, mids)
+    payloads = [
+        global_message_to_response(m, message_type="message", reactions=rmap.get(m.id))
+        for m in msgs
+    ]
     return {
-        "pinned_message_id": msg.id,
-        "pinned_message": global_message_to_response(msg, message_type="message", reactions=r),
+        "pinned_message_id": msgs[0].id,
+        "pinned_message": payloads[0],
+        "pinned_messages": payloads,
+        "pinned_message_ids": mids,
     }
 
 
@@ -411,8 +474,15 @@ async def pin_global_message(db: AsyncSession, actor: User, message_id: int) -> 
     msg = await get_global_message_by_id(db, message_id)
     if not msg:
         raise LookupError("not_found")
-    settings = await get_or_create_chat_settings(db)
-    settings.pinned_message_id = msg.id
+    now = datetime.now(timezone.utc)
+    existing = await db.execute(
+        select(GlobalPinnedMessage).where(GlobalPinnedMessage.message_id == message_id)
+    )
+    row = existing.scalar_one_or_none()
+    if row:
+        row.pinned_at = now
+    else:
+        db.add(GlobalPinnedMessage(message_id=message_id, pinned_at=now))
     await db.flush()
     await log_action(
         db,
@@ -428,10 +498,11 @@ async def pin_global_message(db: AsyncSession, actor: User, message_id: int) -> 
 async def unpin_global_message(db: AsyncSession, actor: User, message_id: int) -> None:
     if not permissions.can_pin(actor):
         raise PermissionError("forbidden")
-    settings = await get_or_create_chat_settings(db)
-    if settings.pinned_message_id != message_id:
+    result = await db.execute(
+        delete(GlobalPinnedMessage).where(GlobalPinnedMessage.message_id == message_id)
+    )
+    if result.rowcount == 0:
         raise LookupError("not_pinned")
-    settings.pinned_message_id = None
     await db.flush()
     await log_action(
         db,

@@ -16,7 +16,14 @@ load_dotenv(_backend_root / ".env")
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import User, GlobalMessage, PrivateMessage, ChatSettings, ModerationAuditLog
+from app.models import (
+    User,
+    GlobalMessage,
+    PrivateMessage,
+    ChatSettings,
+    ModerationAuditLog,
+    GlobalPinnedMessage,
+)
 
 config = context.config
 if config.config_file_name is not None:

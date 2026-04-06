@@ -12,13 +12,14 @@ import {
   api,
   banUser,
   deleteMessage,
+  fetchGlobalMessageContext,
   pinGlobalMessage,
   putMessage,
   setUserRole,
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
-import { privateApiToLine } from "../lib/messageMap";
+import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
@@ -56,14 +57,14 @@ export function ChatPage() {
   const peerId = useChatStore((s) => s.peerId);
   const globalLines = useChatStore((s) => s.globalLines);
   const privateLines = useChatStore((s) => s.privateLines);
-  const pinnedGlobalMessage = useChatStore((s) => s.pinnedGlobalMessage);
+  const pinnedGlobalMessages = useChatStore((s) => s.pinnedGlobalMessages);
   const setMode = useChatStore((s) => s.setMode);
   const setPeer = useChatStore((s) => s.setPeer);
   const setPrivateLines = useChatStore((s) => s.setPrivateLines);
   const resetChat = useChatStore((s) => s.reset);
   const replaceLineById = useChatStore((s) => s.replaceLineById);
   const removeLineById = useChatStore((s) => s.removeLineById);
-  const setPinnedGlobalMessage = useChatStore((s) => s.setPinnedGlobalMessage);
+  const mergeGlobalLines = useChatStore((s) => s.mergeGlobalLines);
 
   const { sendActive, sendReactionToggle } = useChatSocket();
 
@@ -75,6 +76,9 @@ export function ChatPage() {
   const [editingLine, setEditingLine] = useState<ChatLine | null>(null);
   const [banTarget, setBanTarget] = useState<{ id: number; username: string } | null>(null);
   const [banDuration, setBanDuration] = useState<BanDuration>("1h");
+  const [scrollToMessageId, setScrollToMessageId] = useState<string | number | null>(null);
+  /** Which pinned preview is shown (index in server order: newest message first); cycles after each jump-to-message. */
+  const [pinnedPreviewIndex, setPinnedPreviewIndex] = useState(0);
 
   const mod = isModerator(user);
   const admin = isAdmin(user);
@@ -113,30 +117,42 @@ export function ChatPage() {
     return () => window.clearInterval(id);
   }, [loadUsers]);
 
+  const pinIdsKey = pinnedGlobalMessages.map((l) => l.id).join(",");
+  useEffect(() => {
+    setPinnedPreviewIndex(0);
+  }, [pinIdsKey]);
+
   const scope = (): "global" | { peerId: number } =>
     mode === "private" && peerId != null ? { peerId } : "global";
 
-  const openPrivate = useCallback(
-    async (u: SidebarUser) => {
+  const openPrivateChatById = useCallback(
+    async (id: number, username: string) => {
       setMode("private");
-      setPeer(u.id);
-      setPeerName(u.username);
+      setPeer(id);
+      setPeerName(username);
       setReplyTo(null);
       setEditingLine(null);
       if (!user) return;
       try {
         const { data } = await api.get<PrivateMsgApi[]>(
-          `/api/private/messages/${u.id}?limit=100`
+          `/api/private/messages/${id}?limit=100`
         );
         const lines: ChatLine[] = data.map((m) =>
-          privateApiToLine(m, user.id, u.username)
+          privateApiToLine(m, user.id, username)
         );
-        setPrivateLines(u.id, lines);
+        setPrivateLines(id, lines);
       } catch {
         toast.error("Could not load message history");
       }
     },
     [setMode, setPeer, setPrivateLines, user]
+  );
+
+  const openPrivate = useCallback(
+    (u: SidebarUser) => {
+      void openPrivateChatById(u.id, u.username);
+    },
+    [openPrivateChatById]
   );
 
   const backGlobal = useCallback(() => {
@@ -186,37 +202,53 @@ export function ChatPage() {
     const sc = scope();
     await deleteMessage(line.id, messageScope());
     removeLineById(line.id, sc);
-    if (
-      sc === "global" &&
-      pinnedGlobalMessage &&
-      String(pinnedGlobalMessage.id) === String(line.id)
-    ) {
-      setPinnedGlobalMessage(null);
-    }
   };
 
   const handleModDelete = async (line: ChatLine) => {
     if (mode !== "global") return;
     await deleteMessage(line.id, "global");
     removeLineById(line.id, "global");
-    if (
-      pinnedGlobalMessage &&
-      String(pinnedGlobalMessage.id) === String(line.id)
-    ) {
-      setPinnedGlobalMessage(null);
-    }
   };
 
   const handlePin = async (line: ChatLine) => {
     await pinGlobalMessage(line.id);
-    setPinnedGlobalMessage(line);
   };
 
+  const activePinnedLine = pinnedGlobalMessages[pinnedPreviewIndex] ?? null;
+
   const handleUnpin = async () => {
-    if (!pinnedGlobalMessage) return;
-    await unpinGlobalMessage(pinnedGlobalMessage.id);
-    setPinnedGlobalMessage(null);
+    if (!activePinnedLine) return;
+    await unpinGlobalMessage(activePinnedLine.id);
   };
+
+  const clearScrollToMessage = useCallback(() => {
+    setScrollToMessageId(null);
+    setPinnedPreviewIndex((i) => {
+      const n = pinnedGlobalMessages.length;
+      if (n <= 1) return 0;
+      return (i + 1) % n;
+    });
+  }, [pinnedGlobalMessages.length]);
+
+  const goToPinnedMessage = useCallback(
+    async (messageId: string | number) => {
+      if (mode !== "global") return;
+      const inList = globalLines.some((l) => String(l.id) === String(messageId));
+      if (!inList) {
+        try {
+          const data = await fetchGlobalMessageContext(messageId);
+          const mapped: ChatLine[] = data.map((raw) =>
+            globalPayloadToLine(raw as Record<string, unknown>, user?.id)
+          );
+          mergeGlobalLines(mapped);
+        } catch {
+          return;
+        }
+      }
+      setScrollToMessageId(messageId);
+    },
+    [mode, globalLines, user?.id, mergeGlobalLines]
+  );
 
   const confirmBan = async () => {
     if (!banTarget) return;
@@ -270,11 +302,14 @@ export function ChatPage() {
         />
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {mode === "global" && pinnedGlobalMessage && (
+          {mode === "global" && activePinnedLine && pinnedGlobalMessages.length > 0 && (
             <PinnedMessageBar
-              line={pinnedGlobalMessage}
+              line={activePinnedLine}
+              previewIndex={pinnedPreviewIndex + 1}
+              totalPinned={pinnedGlobalMessages.length}
               canUnpin={mod}
               onUnpin={() => void handleUnpin()}
+              onJumpToMessage={() => void goToPinnedMessage(activePinnedLine.id)}
             />
           )}
           <MessageThread
@@ -289,7 +324,12 @@ export function ChatPage() {
             globalRoomBanned={globalBanned}
             isModerator={mod}
             isAdmin={admin}
-            pinnedMessageId={pinnedGlobalMessage?.id ?? null}
+            pinnedMessageIds={pinnedGlobalMessages.map((l) => l.id)}
+            scrollToMessageId={mode === "global" ? scrollToMessageId : null}
+            onScrollToMessageDone={clearScrollToMessage}
+            onJumpToMessage={
+              mode === "global" ? (id) => void goToPinnedMessage(id) : undefined
+            }
             onReply={(line) => {
               setEditingLine(null);
               setReplyTo(line);
@@ -312,6 +352,11 @@ export function ChatPage() {
                     if (!Number.isFinite(id)) return;
                     sendReactionToggle(id, kind);
                   }
+                : undefined
+            }
+            onOpenPrivateChat={
+              mode === "global" && accessToken
+                ? (userId, username) => void openPrivateChatById(userId, username)
                 : undefined
             }
           />
@@ -338,31 +383,7 @@ export function ChatPage() {
       <ConversationsModal
         open={convOpen}
         onClose={() => setConvOpen(false)}
-        onOpenChat={(id, username) => {
-          const su = users.find((x) => x.id === id);
-          if (su) void openPrivate(su);
-          else {
-            setMode("private");
-            setPeer(id);
-            setPeerName(username);
-            setReplyTo(null);
-            setEditingLine(null);
-            void (async () => {
-              if (!user) return;
-              try {
-                const { data } = await api.get<PrivateMsgApi[]>(
-                  `/api/private/messages/${id}?limit=100`
-                );
-                const mapped: ChatLine[] = data.map((m) =>
-                  privateApiToLine(m, user.id, username)
-                );
-                setPrivateLines(id, mapped);
-              } catch {
-                toast.error("Could not load messages");
-              }
-            })();
-          }
-        }}
+        onOpenChat={(id, username) => void openPrivateChatById(id, username)}
       />
 
       {banTarget && (

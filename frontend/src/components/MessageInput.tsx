@@ -1,9 +1,14 @@
-import { useState, useRef, type DragEvent } from "react";
-import { Send, ImagePlus, X } from "lucide-react";
+import { useState, useRef, useEffect, type DragEvent } from "react";
+import data from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
+import { Send, ImagePlus, X, Smile } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { assetUrl } from "../lib/config";
+import { isRichTextEmpty } from "../lib/richText";
 import type { ChatLine, ContentType } from "../types/chat";
+import { messagePlainPreview } from "../lib/richText";
+import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 
 type Props = {
   onSendText: (text: string, type: ContentType, replyToId?: number | null) => void;
@@ -26,14 +31,31 @@ export function MessageInput({
   onCancelEdit,
   onSubmitEdit,
 }: Props) {
-  const [text, setText] = useState(() =>
-    editingLine?.contentType === "text" ? editingLine.body : ""
-  );
+  const richRef = useRef<RichTextEditorHandle>(null);
+  const [draftHtml, setDraftHtml] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const emojiAnchorRef = useRef<HTMLDivElement>(null);
 
   const isEditing = Boolean(editingLine);
+  const initialHtml =
+    editingLine?.contentType === "text" ? editingLine.body : "";
+
+  useEffect(() => {
+    if (!emojiPickerOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (emojiAnchorRef.current?.contains(e.target as Node)) return;
+      setEmojiPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [emojiPickerOpen]);
+
+  const insertEmojiAtCaret = (emoji: string) => {
+    richRef.current?.insertText(emoji);
+  };
 
   const uploadAndSend = async (file: File) => {
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
@@ -68,18 +90,19 @@ export function MessageInput({
   };
 
   const submit = async () => {
-    const t = text.trim();
-    if (!t) return;
+    const html = richRef.current?.getHtml() ?? "";
+    if (isRichTextEmpty(html)) return;
     if (isEditing && editingLine && onSubmitEdit) {
-      await onSubmitEdit(editingLine.id, t);
-      setText("");
+      await onSubmitEdit(editingLine.id, html);
       onCancelEdit?.();
       return;
     }
-    onSendText(t, "text", replyTo?.id != null ? Number(replyTo.id) : undefined);
-    setText("");
+    onSendText(html, "text", replyTo?.id != null ? Number(replyTo.id) : undefined);
+    richRef.current?.clear();
     onClearReply?.();
   };
+
+  const canSend = !isRichTextEmpty(draftHtml);
 
   return (
     <div className="shrink-0 space-y-2 border-t border-slate-800 pt-3">
@@ -87,7 +110,11 @@ export function MessageInput({
         <div className="flex items-start gap-2 rounded border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs text-slate-300">
           <div className="min-w-0 flex-1">
             <span className="font-medium text-violet-300">Replying to {replyTo.author}</span>
-            <p className="line-clamp-2 text-slate-500">{replyTo.body}</p>
+            <p className="line-clamp-2 text-slate-500">
+              {replyTo.contentType === "text"
+                ? messagePlainPreview(replyTo.body, 500)
+                : "[image]"}
+            </p>
           </div>
           <button
             type="button"
@@ -106,7 +133,6 @@ export function MessageInput({
             type="button"
             className="rounded px-2 py-1 hover:bg-amber-900/50"
             onClick={() => {
-              setText("");
               onCancelEdit?.();
             }}
           >
@@ -154,18 +180,49 @@ export function MessageInput({
         <button
           type="button"
           disabled={disabled || isEditing}
-          className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          className="h-[40px] shrink-0 self-end rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           title="Upload image"
           onClick={() => fileRef.current?.click()}
         >
           <ImagePlus className="h-5 w-5" />
         </button>
-        <input
-          className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+        <div className="relative shrink-0 self-end" ref={emojiAnchorRef}>
+          <button
+            type="button"
+            disabled={disabled}
+            className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            title="Emoji"
+            aria-expanded={emojiPickerOpen}
+            aria-haspopup="dialog"
+            aria-label="Open emoji picker"
+            onClick={() => setEmojiPickerOpen((o) => !o)}
+          >
+            <Smile className="h-5 w-5" />
+          </button>
+          {emojiPickerOpen && (
+            <div
+              className="absolute bottom-full left-0 z-50 mb-2 overflow-hidden rounded-lg shadow-xl ring-1 ring-slate-700"
+              role="dialog"
+              aria-label="Emoji picker"
+            >
+              <Picker
+                data={data}
+                theme="dark"
+                onEmojiSelect={(emoji: { native: string }) => {
+                  insertEmojiAtCaret(emoji.native);
+                }}
+              />
+            </div>
+          )}
+        </div>
+        <RichTextEditor
+          ref={richRef}
+          disabled={disabled || Boolean(preview)}
           placeholder={isEditing ? "Edit message…" : "Type a message…"}
-          value={text}
-          disabled={disabled}
-          onChange={(e) => setText(e.target.value)}
+          initialHtml={initialHtml}
+          className="min-w-0 flex-1"
+          aria-label={isEditing ? "Edit message" : "Message text"}
+          onHtmlChange={setDraftHtml}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -175,15 +232,18 @@ export function MessageInput({
         />
         <button
           type="button"
-          disabled={disabled || !text.trim()}
-          className="flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+          disabled={disabled || Boolean(preview) || !canSend}
+          className="flex h-[40px] shrink-0 items-center gap-1 self-end rounded-lg bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
           onClick={() => void submit()}
         >
           <Send className="h-4 w-4" />
           {isEditing ? "Save" : "Send"}
         </button>
       </div>
-      <p className="text-xs text-slate-600">Drag & drop an image to attach</p>
+      <p className="text-xs text-slate-600">
+        Drag & drop an image to attach · Shift+Enter for a new line · Right-click
+        selected text to format
+      </p>
     </div>
   );
 }

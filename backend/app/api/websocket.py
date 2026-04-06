@@ -195,10 +195,6 @@ async def websocket_global_chat(
             recipient_id: Optional[int] = data.get("recipient_id")
             reply_to_id: Optional[int] = data.get("reply_to_id")
 
-            if not text.strip():
-                await websocket.send_text(json.dumps({"error": "Message text is required"}))
-                continue
-
             async with async_session_maker() as db:
                 try:
                     fresh_result = await db.execute(select(User).where(User.id == user.id))
@@ -215,7 +211,7 @@ async def websocket_global_chat(
                                 db,
                                 db_user.id,
                                 recipient_id,
-                                text.strip(),
+                                text,
                                 msg_type,
                                 reply_to_id=reply_to_id,
                             )
@@ -237,7 +233,7 @@ async def websocket_global_chat(
                             msg = await create_global_message(
                                 db,
                                 db_user.id,
-                                text.strip(),
+                                text,
                                 msg_type,
                                 reply_to_id=reply_to_id,
                             )
