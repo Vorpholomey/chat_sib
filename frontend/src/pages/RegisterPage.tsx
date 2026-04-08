@@ -15,7 +15,7 @@ export function RegisterPage() {
     try {
       await register(username, email, password);
       toast.success("Account created");
-      navigate("/", { replace: true });
+      navigate("/", { replace: true, state: { scrollChatToBottom: true } });
     } catch (err: unknown) {
       const msg =
         err && typeof err === "object" && "response" in err

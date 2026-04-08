@@ -13,8 +13,34 @@ const PURIFY = {
   ALLOW_DATA_ATTR: false,
 };
 
+/** After search-highlight injection into already-sanitized HTML. */
+const PURIFY_WITH_MARK = {
+  ALLOWED_TAGS: ["p", "br", "strong", "b", "em", "i", "a", "mark"],
+  ALLOWED_ATTR: ["href"] as string[],
+  ALLOW_DATA_ATTR: false,
+};
+
 export function sanitizeMessageHtml(html: string): string {
   return String(DOMPurify.sanitize(html, PURIFY));
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Wrap case-insensitive matches in `<mark>` for text nodes only (tags from split preserved).
+ * Input must already be sanitized (e.g. sanitizeMessageHtml output).
+ */
+export function highlightSearchInSanitizedHtml(safeHtml: string, query: string): string {
+  const q = query.trim();
+  if (!q) return safeHtml;
+  const re = new RegExp(`(${escapeRegExp(q)})`, "gi");
+  const parts = safeHtml.split(/(<[^>]+>)/g);
+  const joined = parts
+    .map((part) => (part.startsWith("<") ? part : part.replace(re, "<mark>$1</mark>")))
+    .join("");
+  return String(DOMPurify.sanitize(joined, PURIFY_WITH_MARK));
 }
 
 /** Heuristic: stored rich text uses HTML tags (not plain "hello <3"). */

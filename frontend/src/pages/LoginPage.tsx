@@ -15,7 +15,7 @@ export function LoginPage() {
     try {
       await login(email, password);
       toast.success("Welcome back");
-      navigate("/", { replace: true });
+      navigate("/", { replace: true, state: { scrollChatToBottom: true } });
     } catch (e) {
       const ax = e as AxiosError<{ detail?: string }>;
       const d = ax.response?.data?.detail;

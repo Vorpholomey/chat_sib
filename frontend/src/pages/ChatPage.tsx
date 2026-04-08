@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ChatHeader } from "../components/ChatHeader";
 import { ConversationsModal } from "../components/ConversationsModal";
@@ -19,6 +19,7 @@ import {
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
+import { textForMessageSearch } from "../lib/messageSearch";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
@@ -49,6 +50,7 @@ type UserApiRow = {
 
 export function ChatPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const accessToken = useAuthStore((s) => s.accessToken);
   const fetchMe = useAuthStore((s) => s.fetchMe);
@@ -80,8 +82,18 @@ export function ChatPage() {
   const [banTarget, setBanTarget] = useState<{ id: number; username: string } | null>(null);
   const [banDuration, setBanDuration] = useState<BanDuration>("1h");
   const [scrollToMessageId, setScrollToMessageId] = useState<string | number | null>(null);
+  /** Incremented after login/register navigation so the thread scrolls to the latest message once history is present. */
+  const [scrollToBottomNonce, setScrollToBottomNonce] = useState(0);
   /** Which pinned preview is shown (index in server order: newest message first); cycles after each jump-to-message. */
   const [pinnedPreviewIndex, setPinnedPreviewIndex] = useState(0);
+
+  const [msgSearchOpen, setMsgSearchOpen] = useState(false);
+  const [msgSearchDraft, setMsgSearchDraft] = useState("");
+  const [msgSearchQuery, setMsgSearchQuery] = useState("");
+  const [msgSearchHasRun, setMsgSearchHasRun] = useState(false);
+  const [msgSearchMatchIds, setMsgSearchMatchIds] = useState<(string | number)[]>([]);
+  const [msgSearchActiveIdx, setMsgSearchActiveIdx] = useState(0);
+  const [msgSearchScrollToId, setMsgSearchScrollToId] = useState<string | number | null>(null);
 
   const mod = isModerator(user);
   const admin = isAdmin(user);
@@ -102,6 +114,13 @@ export function ChatPage() {
       });
     }
   }, [accessToken, user, fetchMe, logout, navigate]);
+
+  useEffect(() => {
+    const st = location.state as { scrollChatToBottom?: boolean } | null;
+    if (!st?.scrollChatToBottom) return;
+    setScrollToBottomNonce((n) => n + 1);
+    navigate(location.pathname, { replace: true });
+  }, [location, navigate]);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -131,6 +150,16 @@ export function ChatPage() {
   useEffect(() => {
     setPinnedPreviewIndex(0);
   }, [pinIdsKey]);
+
+  useEffect(() => {
+    setMsgSearchOpen(false);
+    setMsgSearchDraft("");
+    setMsgSearchQuery("");
+    setMsgSearchHasRun(false);
+    setMsgSearchMatchIds([]);
+    setMsgSearchActiveIdx(0);
+    setMsgSearchScrollToId(null);
+  }, [mode, peerId]);
 
   const scope = (): "global" | { peerId: number } =>
     mode === "private" && peerId != null ? { peerId } : "global";
@@ -189,6 +218,79 @@ export function ChatPage() {
       : mode === "private" && peerId != null
         ? privateLines[peerId] ?? []
         : globalLines;
+
+  const runMessageSearch = useCallback(() => {
+    setMsgSearchHasRun(true);
+    const q = msgSearchDraft.trim();
+    setMsgSearchQuery(q);
+    if (!q) {
+      setMsgSearchMatchIds([]);
+      setMsgSearchActiveIdx(0);
+      setMsgSearchScrollToId(null);
+      return;
+    }
+    const lower = q.toLowerCase();
+    const ids = lines
+      .filter((l) =>
+        textForMessageSearch(l.body).toLowerCase().includes(lower)
+      )
+      .map((l) => l.id);
+    setMsgSearchMatchIds(ids);
+    setMsgSearchActiveIdx(0);
+    if (ids.length > 0) setMsgSearchScrollToId(ids[0]!);
+    else setMsgSearchScrollToId(null);
+  }, [msgSearchDraft, lines]);
+
+  const closeMessageSearch = useCallback(() => {
+    setMsgSearchOpen(false);
+    setMsgSearchDraft("");
+    setMsgSearchQuery("");
+    setMsgSearchHasRun(false);
+    setMsgSearchMatchIds([]);
+    setMsgSearchActiveIdx(0);
+    setMsgSearchScrollToId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!msgSearchOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMessageSearch();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [msgSearchOpen, closeMessageSearch]);
+
+  const msgSearchGoNext = useCallback(() => {
+    if (msgSearchMatchIds.length === 0) return;
+    const next = (msgSearchActiveIdx + 1) % msgSearchMatchIds.length;
+    setMsgSearchActiveIdx(next);
+    setMsgSearchScrollToId(msgSearchMatchIds[next]!);
+  }, [msgSearchMatchIds, msgSearchActiveIdx]);
+
+  const msgSearchGoPrev = useCallback(() => {
+    if (msgSearchMatchIds.length === 0) return;
+    const prev =
+      (msgSearchActiveIdx - 1 + msgSearchMatchIds.length) %
+      msgSearchMatchIds.length;
+    setMsgSearchActiveIdx(prev);
+    setMsgSearchScrollToId(msgSearchMatchIds[prev]!);
+  }, [msgSearchMatchIds, msgSearchActiveIdx]);
+
+  const msgSearchActiveId =
+    msgSearchOpen &&
+    msgSearchHasRun &&
+    msgSearchMatchIds.length > 0 &&
+    msgSearchMatchIds[msgSearchActiveIdx] != null
+      ? msgSearchMatchIds[msgSearchActiveIdx]!
+      : null;
+
+  const msgSearchHighlightQuery =
+    msgSearchOpen && msgSearchHasRun && msgSearchQuery.trim()
+      ? msgSearchQuery
+      : null;
 
   const title =
     mode === "private" && peerName ? `Private — ${peerName}` : "Global chat";
@@ -370,6 +472,19 @@ export function ChatPage() {
         onOpenConversations={() => setConvOpen(true)}
         showBack={mode === "private"}
         onBackGlobal={backGlobal}
+        messageSearch={{
+          open: msgSearchOpen,
+          draft: msgSearchDraft,
+          onDraftChange: setMsgSearchDraft,
+          onOpen: () => setMsgSearchOpen(true),
+          onClose: closeMessageSearch,
+          onSubmit: runMessageSearch,
+          hasRun: msgSearchHasRun,
+          matchCount: msgSearchMatchIds.length,
+          activeIndex: msgSearchActiveIdx,
+          onPrev: msgSearchGoPrev,
+          onNext: msgSearchGoNext,
+        }}
       />
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 pt-3 lg:flex-row">
@@ -401,6 +516,10 @@ export function ChatPage() {
           )}
           <MessageThread
             lines={lines}
+            scrollToBottomNonce={scrollToBottomNonce}
+            searchScrollToMessageId={msgSearchScrollToId}
+            searchActiveMessageId={msgSearchActiveId}
+            searchHighlightQuery={msgSearchHighlightQuery}
             emptyHint={
               mode === "private"
                 ? "No messages yet — say hi!"

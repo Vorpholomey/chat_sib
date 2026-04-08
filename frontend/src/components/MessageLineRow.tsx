@@ -1,6 +1,7 @@
 import { memo, useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import { Pin, Reply } from "lucide-react";
 import { assetUrl } from "../lib/config";
+import { textForMessageSearch } from "../lib/messageSearch";
 import { usernameColorFromUser } from "../lib/usernameColor";
 import { formatTimeHm } from "../store/chatStore";
 import type { ChatLine } from "../types/chat";
@@ -10,6 +11,12 @@ import { MessageReactionChips, ReactionPickerControl } from "./MessageReactions"
 import { MessageRichText } from "./MessageRichText";
 import { ReplyQuotePreview } from "./ReplyQuotePreview";
 import { RoleBadge } from "./RoleBadge";
+
+function lineMatchesSearchQuery(body: string, q: string): boolean {
+  const t = q.trim();
+  if (!t) return false;
+  return textForMessageSearch(body).toLowerCase().includes(t.toLowerCase());
+}
 
 function roleRank(r: UserRole | undefined): number {
   if (r === "admin") return 3;
@@ -27,6 +34,10 @@ export type MessageLineRowProps = {
   isGlobal: boolean;
   pinnedSet: Set<string>;
   highlightMessageId: string | number | null;
+  /** Message id currently selected in in-chat search (distinct from jump-to highlight). */
+  searchActiveMessageId?: string | number | null;
+  /** Substring for inline <mark> in body when this line is a search hit. */
+  searchHighlightQuery?: string | null;
   threadRef: RefObject<HTMLDivElement | null>;
   onContextMenu: (line: ChatLine, e: ReactMouseEvent) => void;
   onReply?: (line: ChatLine) => void;
@@ -49,6 +60,8 @@ function MessageLineRowInner({
   isGlobal,
   pinnedSet,
   highlightMessageId,
+  searchActiveMessageId = null,
+  searchHighlightQuery = null,
   threadRef,
   onContextMenu,
   onReply,
@@ -108,6 +121,12 @@ function MessageLineRowInner({
   const isHighlighted =
     highlightMessageId != null &&
     String(highlightMessageId) === String(line.id);
+  const isSearchActive =
+    searchActiveMessageId != null &&
+    String(searchActiveMessageId) === String(line.id);
+  const showSearchInline =
+    Boolean(searchHighlightQuery?.trim()) &&
+    lineMatchesSearchQuery(line.body, searchHighlightQuery!);
 
   const imageSrc =
     line.contentType !== "text" ? assetUrl(line.body) : "";
@@ -153,7 +172,13 @@ function MessageLineRowInner({
             own
               ? "border-violet-800/35 bg-violet-950/35 text-slate-100"
               : "border-slate-700/80 bg-slate-800/75 text-slate-200"
-          } ${isHighlighted ? "ring-2 ring-amber-400/85" : ""}`}
+          } ${
+            isSearchActive
+              ? "bg-amber-500/15 ring-2 ring-yellow-400/90"
+              : isHighlighted
+                ? "ring-2 ring-amber-400/85"
+                : ""
+          }`}
         >
           {line.replyTo && (
             <div className="mb-1 border-l-2 border-slate-600/80 pl-2 text-left text-xs text-slate-500">
@@ -230,7 +255,12 @@ function MessageLineRowInner({
           )}
           <div className="min-w-0">
             {line.contentType === "text" ? (
-              <MessageRichText body={line.body} />
+              <MessageRichText
+                body={line.body}
+                searchHighlight={
+                  showSearchInline ? searchHighlightQuery! : undefined
+                }
+              />
             ) : (
               <span className="inline-block align-top">
                 <span className="text-slate-400">[image]</span>

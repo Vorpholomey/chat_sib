@@ -30,6 +30,14 @@ type Props = {
   /** When set, scroll to this message (smooth, center), then highlight briefly. */
   scrollToMessageId?: string | number | null;
   onScrollToMessageDone?: () => void;
+  /** In-chat search: scroll to this message instantly (center). */
+  searchScrollToMessageId?: string | number | null;
+  /** In-chat search: highlighted message id (yellow ring). */
+  searchActiveMessageId?: string | number | null;
+  /** In-chat search: substring for inline highlights on matching lines. */
+  searchHighlightQuery?: string | null;
+  /** Incremented (e.g. after login) to scroll to the newest message once lines are available. */
+  scrollToBottomNonce?: number;
   /** Jump to a message in the thread (e.g. pinned marker click). */
   onJumpToMessage?: (messageId: string | number) => void;
   onReply?: (line: ChatLine) => void;
@@ -64,6 +72,10 @@ export function MessageThread({
   pinnedMessageIds,
   scrollToMessageId = null,
   onScrollToMessageDone,
+  searchScrollToMessageId = null,
+  searchActiveMessageId = null,
+  searchHighlightQuery = null,
+  scrollToBottomNonce = 0,
   onJumpToMessage,
   onReply,
   onEditOwn,
@@ -88,6 +100,7 @@ export function MessageThread({
   const [menuFixed, setMenuFixed] = useState<{ top: number; left: number } | null>(null);
   const menuRef = useRef<HTMLUListElement | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const lastHandledBottomNonceRef = useRef(0);
 
   const updateScrollPinnedState = useCallback(() => {
     const el = threadRef.current;
@@ -126,7 +139,8 @@ export function MessageThread({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuId, openLine?.id]);
 
-  useEffect(() => {
+  /** New lines increase scrollHeight before scrollTop moves; measuring "at bottom" before scrolling falsely clears stickiness. Read stickiness first, scroll, then measure. */
+  useLayoutEffect(() => {
     if (lines.length === 0) {
       prevLastLineIdRef.current = null;
       atBottomRef.current = true;
@@ -139,19 +153,33 @@ export function MessageThread({
       bottomRef.current?.scrollIntoView({ behavior: "auto" });
       atBottomRef.current = true;
       setShowScrollToBottom(false);
+      updateScrollPinnedState();
       return;
     }
     if (prevLastLineIdRef.current !== lastId) {
+      const shouldStickToBottom = atBottomRef.current;
       prevLastLineIdRef.current = lastId;
-      if (atBottomRef.current) {
+      if (shouldStickToBottom) {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        atBottomRef.current = true;
+        setShowScrollToBottom(false);
       }
     }
-  }, [lines]);
-
-  useLayoutEffect(() => {
     updateScrollPinnedState();
   }, [lines, updateScrollPinnedState]);
+
+  /** After login/register, ensure we end at the newest message once history has loaded (WS may stream many frames). */
+  useLayoutEffect(() => {
+    if (!scrollToBottomNonce) return;
+    if (lines.length === 0) return;
+    if (lastHandledBottomNonceRef.current === scrollToBottomNonce) return;
+    lastHandledBottomNonceRef.current = scrollToBottomNonce;
+    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    atBottomRef.current = true;
+    setShowScrollToBottom(false);
+    prevLastLineIdRef.current = lines[lines.length - 1]!.id;
+    updateScrollPinnedState();
+  }, [scrollToBottomNonce, lines, updateScrollPinnedState]);
 
   const scrollThreadToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -175,6 +203,15 @@ export function MessageThread({
     }, 2000);
     onScrollToMessageDone?.();
   }, [scrollToMessageId, lines, onScrollToMessageDone]);
+
+  useLayoutEffect(() => {
+    if (searchScrollToMessageId == null) return;
+    const el = threadRef.current?.querySelector<HTMLElement>(
+      `[data-chat-message-id="${String(searchScrollToMessageId)}"]`
+    );
+    if (!el) return;
+    el.scrollIntoView({ behavior: "auto", block: "center" });
+  }, [searchScrollToMessageId, lines]);
 
   useEffect(() => {
     return () => {
@@ -310,6 +347,8 @@ export function MessageThread({
                 isGlobal={isGlobal}
                 pinnedSet={pinnedSet}
                 highlightMessageId={highlightMessageId}
+                searchActiveMessageId={searchActiveMessageId}
+                searchHighlightQuery={searchHighlightQuery}
                 threadRef={threadRef}
                 onContextMenu={openContextMenu}
                 onReply={onReply}
