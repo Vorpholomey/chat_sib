@@ -147,6 +147,10 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 - **Jump to pinned message**: clicking the pinned bar or the pin marker on the message row scrolls the thread to that message (centered), applies a short highlight, and merges additional history via `mergeGlobalLines` + the context endpoint when the message is not already in memory.
 - Tokens live in **localStorage** (persisted store) under keys such as `chat-auth` (see `authStore`).
 
+### 3.5 Responsive shell (mobile)
+
+- Viewports **below 768px** (Tailwind `max-md`): the **People** list is **not** shown next to the thread. The header shows **Dialogues** and **Users** on one row (same primary button style). **Users** opens a **fullscreen** overlay (`fixed inset-0`, opaque background) that mounts `UserSidebar` with `layout="fullscreen"`; **← Global** closes the overlay. **Escape** also closes it; crossing **768px** width dismisses it. At **`md` and up**, the inline sidebar returns (`UserSidebar` in the main flex row).
+
 ## 4. Cross-cutting concerns
 
 - **CORS**: backend allows broad origins in dev-style config; tighten for production deployments.

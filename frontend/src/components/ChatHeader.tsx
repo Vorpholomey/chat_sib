@@ -3,6 +3,10 @@ import { LogOut, MessageSquare, Search, Users, X } from "lucide-react";
 import type { UserRole } from "../types/user";
 import { RoleBadge } from "./RoleBadge";
 
+/** Primary header actions (Dialogues / Users): shared look and hover/active states */
+export const CHAT_HEADER_ACTION_BTN =
+  "flex h-[33px] shrink-0 items-center gap-1 rounded-lg border border-slate-700 px-3 text-sm text-violet-300 shadow-sm hover:bg-slate-800 active:bg-slate-800";
+
 export type ChatMessageSearchControls = {
   open: boolean;
   draft: string;
@@ -24,6 +28,8 @@ type Props = {
   userRole?: UserRole;
   onLogout: () => void;
   onOpenConversations: () => void;
+  /** Mobile (max-width 767px): opens fullscreen user list; omitted on desktop where the sidebar is visible */
+  onOpenUsers?: () => void;
   onBackGlobal?: () => void;
   showBack?: boolean;
   messageSearch?: ChatMessageSearchControls;
@@ -36,6 +42,7 @@ export function ChatHeader({
   userRole,
   onLogout,
   onOpenConversations,
+  onOpenUsers,
   onBackGlobal,
   showBack,
   messageSearch,
@@ -52,56 +59,67 @@ export function ChatHeader({
 
   return (
     <header className="flex shrink-0 flex-col gap-2 border-b border-slate-800 pb-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {showBack && onBackGlobal && (
-              <button
-                type="button"
-                className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
-                onClick={onBackGlobal}
-              >
-                ← Global
-              </button>
-            )}
-            <h1 className="truncate text-lg font-semibold text-white">{title}</h1>
+      <div className="flex flex-col gap-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {showBack && onBackGlobal && (
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+                  onClick={onBackGlobal}
+                >
+                  ← Global
+                </button>
+              )}
+              <h1 className="truncate text-lg font-semibold text-white">{title}</h1>
+            </div>
+            {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
           </div>
-          {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 shrink-0 text-slate-500" />
+              <span className="max-w-[140px] truncate text-sm text-slate-300">{username}</span>
+              {userRole && <RoleBadge role={userRole} />}
+            </div>
+            <button
+              type="button"
+              className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+              onClick={onLogout}
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+          </div>
         </div>
 
-        {ms && (
-          <button
-            type="button"
-            className="flex h-[33px] shrink-0 items-center justify-center rounded-lg border border-slate-700 px-3 text-sm text-violet-300 shadow-sm hover:bg-slate-800"
-            aria-label={ms.open ? "Search messages (open)" : "Search messages"}
-            title="Search messages"
-            onClick={() => (ms.open ? inputRef.current?.focus() : ms.onOpen())}
-          >
-            <Search className="h-4 w-4 shrink-0" aria-hidden />
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={CHAT_HEADER_ACTION_BTN} onClick={onOpenConversations}>
+            <MessageSquare className="h-4 w-4" />
+            Dialogues
           </button>
-        )}
-
-        <button
-          type="button"
-          className="flex h-[33px] shrink-0 items-center gap-1 rounded-lg border border-slate-700 px-3 text-sm text-violet-300 shadow-sm hover:bg-slate-800"
-          onClick={onOpenConversations}
-        >
-          <MessageSquare className="h-4 w-4" />
-          Dialogues
-        </button>
-        <div className="flex shrink-0 items-center gap-2">
-          <Users className="h-4 w-4 text-slate-500" />
-          <span className="max-w-[140px] truncate text-sm text-slate-300">{username}</span>
-          {userRole && <RoleBadge role={userRole} />}
+          {onOpenUsers && (
+            <button
+              type="button"
+              className={`${CHAT_HEADER_ACTION_BTN} md:hidden`}
+              onClick={onOpenUsers}
+            >
+              <Users className="h-4 w-4" />
+              Users
+            </button>
+          )}
+          {ms && (
+            <button
+              type="button"
+              className={`${CHAT_HEADER_ACTION_BTN} justify-center`}
+              aria-label={ms.open ? "Search messages (open)" : "Search messages"}
+              title="Search messages"
+              onClick={() => (ms.open ? inputRef.current?.focus() : ms.onOpen())}
+            >
+              <Search className="h-4 w-4 shrink-0" aria-hidden />
+            </button>
+          )}
         </div>
-        <button
-          type="button"
-          className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
-          onClick={onLogout}
-        >
-          <LogOut className="h-4 w-4" />
-          Logout
-        </button>
       </div>
 
       {ms?.open && (
