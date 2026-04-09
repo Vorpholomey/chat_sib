@@ -76,6 +76,7 @@ export function ChatPage() {
   const [users, setUsers] = useState<SidebarUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [convOpen, setConvOpen] = useState(false);
+  const [usersOverlayOpen, setUsersOverlayOpen] = useState(false);
   const [peerName, setPeerName] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<ChatLine | null>(null);
   const [editingLine, setEditingLine] = useState<ChatLine | null>(null);
@@ -363,9 +364,37 @@ export function ChatPage() {
   const onSelectSidebarUser = useCallback(
     (u: SidebarUser) => {
       void openPrivate(u);
+      setUsersOverlayOpen(false);
     },
     [openPrivate]
   );
+
+  useEffect(() => {
+    if (!usersOverlayOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUsersOverlayOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [usersOverlayOpen]);
+
+  useEffect(() => {
+    if (!usersOverlayOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [usersOverlayOpen]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = () => {
+      if (mq.matches) setUsersOverlayOpen(false);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const onBanUserFromSidebar = useCallback((u: SidebarUser) => {
     setBanTarget({ id: u.id, username: u.username });
@@ -470,6 +499,7 @@ export function ChatPage() {
         userRole={user?.role}
         onLogout={onLogout}
         onOpenConversations={() => setConvOpen(true)}
+        onOpenUsers={() => setUsersOverlayOpen(true)}
         showBack={mode === "private"}
         onBackGlobal={backGlobal}
         messageSearch={{
@@ -487,18 +517,20 @@ export function ChatPage() {
         }}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 pt-3 lg:flex-row">
-        <UserSidebar
-          users={users}
-          selectedId={mode === "private" ? peerId : null}
-          onSelect={onSelectSidebarUser}
-          loading={usersLoading}
-          currentUserId={user?.id}
-          isAdmin={admin}
-          isModerator={mod}
-          onBanUser={onBanUserFromSidebar}
-          onSetRole={admin ? onSetRole : undefined}
-        />
+      <div className="flex min-h-0 flex-1 flex-col gap-3 pt-3 md:flex-row">
+        <div className="hidden h-full min-h-0 w-full max-h-full shrink-0 overflow-hidden md:flex md:h-full md:max-h-full md:w-72 md:flex-col">
+          <UserSidebar
+            users={users}
+            selectedId={mode === "private" ? peerId : null}
+            onSelect={onSelectSidebarUser}
+            loading={usersLoading}
+            currentUserId={user?.id}
+            isAdmin={admin}
+            isModerator={mod}
+            onBanUser={onBanUserFromSidebar}
+            onSetRole={admin ? onSetRole : undefined}
+          />
+        </div>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           {mode === "global" &&
@@ -576,6 +608,42 @@ export function ChatPage() {
         onClose={() => setConvOpen(false)}
         onOpenChat={(id, username) => void openPrivateChatById(id, username)}
       />
+
+      {usersOverlayOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col bg-slate-950 md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-users-overlay-title"
+        >
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-3">
+            <button
+              type="button"
+              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 active:bg-slate-800"
+              onClick={() => setUsersOverlayOpen(false)}
+            >
+              ← Global
+            </button>
+            <span id="mobile-users-overlay-title" className="sr-only">
+              People in chat
+            </span>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col px-1 pb-3 pt-2">
+            <UserSidebar
+              layout="fullscreen"
+              users={users}
+              selectedId={mode === "private" ? peerId : null}
+              onSelect={onSelectSidebarUser}
+              loading={usersLoading}
+              currentUserId={user?.id}
+              isAdmin={admin}
+              isModerator={mod}
+              onBanUser={onBanUserFromSidebar}
+              onSetRole={admin ? onSetRole : undefined}
+            />
+          </div>
+        </div>
+      )}
 
       {banTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">

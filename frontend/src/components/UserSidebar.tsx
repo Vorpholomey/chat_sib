@@ -20,6 +20,8 @@ type Props = {
   isModerator?: boolean;
   onBanUser?: (u: SidebarUser) => void;
   onSetRole?: (userId: number, role: Exclude<UserRole, "admin">) => void | Promise<void>;
+  /** Inline sidebar in the main layout (default) vs full-height panel inside the mobile overlay */
+  layout?: "inline" | "fullscreen";
 };
 
 const MENU_MIN_W = 176;
@@ -54,6 +56,7 @@ export function UserSidebar({
   isModerator = false,
   onBanUser,
   onSetRole,
+  layout = "inline",
 }: Props) {
   const [roleSavingId, setRoleSavingId] = useState<number | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
@@ -118,13 +121,27 @@ export function UserSidebar({
     setOpenMenuId(u.id);
   };
 
+  const isFullscreen = layout === "fullscreen";
+
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-slate-800 bg-slate-900/40 pb-3 lg:w-72 lg:border-b-0 lg:border-r lg:pb-0">
-      <h2 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <aside
+      className={
+        isFullscreen
+          ? "flex h-full min-h-0 flex-1 flex-col border-0 bg-transparent pb-0"
+          : "flex h-full min-h-0 max-h-full w-full flex-col overflow-hidden border-b border-slate-800 bg-slate-900/40 pb-3 md:w-72 md:shrink-0 md:border-b-0 md:border-r md:pb-0"
+      }
+    >
+      <h2 className="mb-2 flex shrink-0 items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
         <MessageCircle className="h-4 w-4" />
         People
       </h2>
-      <div className="max-h-40 overflow-y-auto lg:max-h-none">
+      <div
+        className={
+          isFullscreen
+            ? "min-h-0 flex-1 overflow-y-auto"
+            : "min-h-0 flex-1 overflow-y-auto max-h-40 md:max-h-full"
+        }
+      >
         {loading ? (
           <p className="px-1 text-sm text-slate-500">Loading…</p>
         ) : sortedUsers.length === 0 ? (
