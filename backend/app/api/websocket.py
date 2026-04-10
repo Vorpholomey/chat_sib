@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.global_message import MessageType
 from app.services import permissions
 from app.services.message import (
+    CHAT_PAGE_SIZE,
     get_last_global_messages,
     create_global_message,
     create_private_message,
@@ -108,7 +109,7 @@ async def websocket_global_chat(
                     pin_payload = await get_pinned_message_payload(db)
                     pin_payload["type"] = "pin_changed"
                     await websocket.send_text(json.dumps(pin_payload))
-                    history = await get_last_global_messages(db, limit=1000)
+                    history = await get_last_global_messages(db, limit=CHAT_PAGE_SIZE)
                     mids = [m.id for m in history]
                     rmap = await reactions_map_global(db, mids)
                     for msg in history:
@@ -119,6 +120,11 @@ async def websocket_global_chat(
                 except Exception as e:
                     logger.exception("Failed to send pin/history: %s", e)
                 await db.commit()
+
+        try:
+            await websocket.send_text(json.dumps({"type": "global_history_ready"}))
+        except Exception:
+            logger.exception("Failed to send global_history_ready")
 
         while True:
             raw = await websocket.receive_text()

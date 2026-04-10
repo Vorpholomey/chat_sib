@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { Ban, ChevronDown, Pencil, Pin, Reply, Trash2 } from "lucide-react";
+import { Ban, ChevronDown, Loader2, Pencil, Pin, Reply, Trash2 } from "lucide-react";
 import { positionMenuNearPointInBounds } from "../lib/floatingMenuPosition";
 import { lineKey } from "../store/chatStore";
 import type { ChatLine, ChatMode } from "../types/chat";
@@ -38,6 +38,9 @@ type Props = {
   searchHighlightQuery?: string | null;
   /** Incremented (e.g. after login) to scroll to the newest message once lines are available. */
   scrollToBottomNonce?: number;
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void>;
   /** Jump to a message in the thread (e.g. pinned marker click). */
   onJumpToMessage?: (messageId: string | number) => void;
   onReply?: (line: ChatLine) => void;
@@ -54,6 +57,8 @@ type Props = {
 /** Matches prior `min-w-[10rem]` so positioning clamps correctly. */
 const MESSAGE_MENU_MIN_W = 160;
 const ESTIMATED_MENU_H = 180;
+/** When within this many px of the top, fetch older messages. */
+const SCROLL_LOAD_OLDER_PX = 120;
 
 function roleRank(r: UserRole | undefined): number {
   if (r === "admin") return 3;
@@ -76,6 +81,9 @@ export function MessageThread({
   searchActiveMessageId = null,
   searchHighlightQuery = null,
   scrollToBottomNonce = 0,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   onJumpToMessage,
   onReply,
   onEditOwn,
@@ -101,6 +109,10 @@ export function MessageThread({
   const menuRef = useRef<HTMLUListElement | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const lastHandledBottomNonceRef = useRef(0);
+  const scrollRestoreSnapRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
+    null
+  );
+  const loadOlderInFlightRef = useRef(false);
 
   const updateScrollPinnedState = useCallback(() => {
     const el = threadRef.current;
@@ -168,6 +180,17 @@ export function MessageThread({
     updateScrollPinnedState();
   }, [lines, updateScrollPinnedState]);
 
+  useLayoutEffect(() => {
+    const snap = scrollRestoreSnapRef.current;
+    if (!snap || !threadRef.current) return;
+    scrollRestoreSnapRef.current = null;
+    const el = threadRef.current;
+    const dh = el.scrollHeight - snap.scrollHeight;
+    if (dh > 0) {
+      el.scrollTop = snap.scrollTop + dh;
+    }
+  }, [lines]);
+
   /** After login/register, ensure we end at the newest message once history has loaded (WS may stream many frames). */
   useLayoutEffect(() => {
     if (!scrollToBottomNonce) return;
@@ -186,6 +209,26 @@ export function MessageThread({
     atBottomRef.current = true;
     setShowScrollToBottom(false);
   }, []);
+
+  const handleThreadScroll = useCallback(() => {
+    updateScrollPinnedState();
+    const el = threadRef.current;
+    if (!el || !onLoadOlder || !hasMoreOlder || loadingOlder) return;
+    if (el.scrollTop > SCROLL_LOAD_OLDER_PX) return;
+    if (loadOlderInFlightRef.current) return;
+    loadOlderInFlightRef.current = true;
+    scrollRestoreSnapRef.current = {
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+    void (async () => {
+      try {
+        await onLoadOlder();
+      } finally {
+        loadOlderInFlightRef.current = false;
+      }
+    })();
+  }, [updateScrollPinnedState, onLoadOlder, hasMoreOlder, loadingOlder]);
 
   useLayoutEffect(() => {
     if (scrollToMessageId == null) return;
@@ -328,7 +371,7 @@ export function MessageThread({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={threadRef}
-        onScroll={updateScrollPinnedState}
+        onScroll={handleThreadScroll}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2"
       >
         {lines.length === 0 ? (
@@ -365,6 +408,17 @@ export function MessageThread({
         )}
         <div ref={bottomRef} />
       </div>
+
+      {loadingOlder && (
+        <div
+          className="pointer-events-none absolute left-0 right-0 top-0 z-10 flex items-center justify-center gap-2 rounded-t-lg border-b border-slate-700/80 bg-slate-950/90 py-1.5 text-xs text-slate-400 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+          <span>Loading older messages…</span>
+        </div>
+      )}
 
       {showScrollToBottom && (
         <button

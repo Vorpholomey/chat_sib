@@ -11,7 +11,9 @@ import { useChatSocket } from "../hooks/useChatSocket";
 import {
   api,
   banUser,
+  CHAT_PAGE_SIZE,
   deleteMessage,
+  fetchGlobalHistoryBefore,
   fetchGlobalMessageContext,
   pinGlobalMessage,
   putMessage,
@@ -70,6 +72,8 @@ export function ChatPage() {
   const replaceLineById = useChatStore((s) => s.replaceLineById);
   const removeLineById = useChatStore((s) => s.removeLineById);
   const mergeGlobalLines = useChatStore((s) => s.mergeGlobalLines);
+  const mergePrivateLines = useChatStore((s) => s.mergePrivateLines);
+  const globalHistoryReady = useChatStore((s) => s.globalHistoryReady);
 
   const { sendActive, sendReactionToggle } = useChatSocket();
 
@@ -95,6 +99,9 @@ export function ChatPage() {
   const [msgSearchMatchIds, setMsgSearchMatchIds] = useState<(string | number)[]>([]);
   const [msgSearchActiveIdx, setMsgSearchActiveIdx] = useState(0);
   const [msgSearchScrollToId, setMsgSearchScrollToId] = useState<string | number | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [globalHasMoreOlder, setGlobalHasMoreOlder] = useState(true);
+  const [privateHasMoreOlder, setPrivateHasMoreOlder] = useState(false);
 
   const mod = isModerator(user);
   const admin = isAdmin(user);
@@ -162,6 +169,13 @@ export function ChatPage() {
     setMsgSearchScrollToId(null);
   }, [mode, peerId]);
 
+  useEffect(() => {
+    if (!globalHistoryReady || permanentGlobalBan || mode !== "global") return;
+    setGlobalHasMoreOlder(
+      useChatStore.getState().globalLines.length >= CHAT_PAGE_SIZE
+    );
+  }, [globalHistoryReady, mode, permanentGlobalBan]);
+
   const scope = (): "global" | { peerId: number } =>
     mode === "private" && peerId != null ? { peerId } : "global";
 
@@ -175,12 +189,14 @@ export function ChatPage() {
       if (!user) return;
       try {
         const { data } = await api.get<PrivateMsgApi[]>(
-          `/api/private/messages/${id}?limit=100`
+          `/api/private/messages/${id}`,
+          { params: { limit: CHAT_PAGE_SIZE } }
         );
         const lines: ChatLine[] = data.map((m) =>
           privateApiToLine(m, user.id, username)
         );
         setPrivateLines(id, lines);
+        setPrivateHasMoreOlder(data.length === CHAT_PAGE_SIZE);
       } catch {
         toast.error("Could not load message history");
       }
@@ -484,6 +500,74 @@ export function ChatPage() {
     }
   };
 
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlder) return;
+    const currentLines =
+      permanentGlobalBan && mode === "global"
+        ? []
+        : mode === "private" && peerId != null
+          ? privateLines[peerId] ?? []
+          : globalLines;
+    if (currentLines.length === 0) return;
+    const oldestId = currentLines[0].id;
+
+    if (mode === "private") {
+      if (peerId == null || !user) return;
+      setLoadingOlder(true);
+      try {
+        const { data } = await api.get<PrivateMsgApi[]>(
+          `/api/private/messages/${peerId}`,
+          { params: { limit: CHAT_PAGE_SIZE, before_id: oldestId } }
+        );
+        const peerLabel = peerName ?? "…";
+        const batch: ChatLine[] = data.map((m) =>
+          privateApiToLine(m, user.id, peerLabel)
+        );
+        mergePrivateLines(peerId, batch);
+        setPrivateHasMoreOlder(data.length === CHAT_PAGE_SIZE);
+      } catch {
+        toast.error("Could not load older messages");
+      } finally {
+        setLoadingOlder(false);
+      }
+      return;
+    }
+
+    if (mode === "global" && !permanentGlobalBan) {
+      setLoadingOlder(true);
+      try {
+        const raw = await fetchGlobalHistoryBefore(oldestId, CHAT_PAGE_SIZE);
+        const batch: ChatLine[] = raw.map((row) =>
+          globalPayloadToLine(row as Record<string, unknown>, user?.id)
+        );
+        mergeGlobalLines(batch);
+        setGlobalHasMoreOlder(batch.length === CHAT_PAGE_SIZE);
+      } catch {
+        /* toast in fetchGlobalHistoryBefore */
+      } finally {
+        setLoadingOlder(false);
+      }
+    }
+  }, [
+    loadingOlder,
+    permanentGlobalBan,
+    mode,
+    peerId,
+    peerName,
+    privateLines,
+    globalLines,
+    user,
+    mergePrivateLines,
+    mergeGlobalLines,
+  ]);
+
+  const hasMoreOlder =
+    mode === "private" && peerId != null
+      ? privateHasMoreOlder
+      : mode === "global" && !permanentGlobalBan
+        ? globalHasMoreOlder && globalHistoryReady
+        : false;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ChatHeader
@@ -548,6 +632,9 @@ export function ChatPage() {
           )}
           <MessageThread
             lines={lines}
+            hasMoreOlder={hasMoreOlder}
+            loadingOlder={loadingOlder}
+            onLoadOlder={accessToken ? loadOlderMessages : undefined}
             scrollToBottomNonce={scrollToBottomNonce}
             searchScrollToMessageId={msgSearchScrollToId}
             searchActiveMessageId={msgSearchActiveId}

@@ -21,6 +21,8 @@ from app.services.message import (
     broadcast_pin_changed,
     create_global_message,
     delete_global_message,
+    CHAT_PAGE_SIZE,
+    get_global_messages_before_id,
     get_global_messages_near,
     global_message_to_rest_dict,
     global_message_to_response,
@@ -41,6 +43,27 @@ from app.services.reactions import (
 )
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+@router.get("/global/history")
+async def get_global_history_older(
+    before_id: Annotated[int, Query(..., ge=1, description="Load global messages older than this id")],
+    limit: int = Query(CHAT_PAGE_SIZE, ge=1, le=100, description="Max messages to return"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Paginated global history: messages strictly before `before_id`, chronological order."""
+    if not permissions.can_access_global_feed(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No access to global chat",
+        )
+    msgs = await get_global_messages_before_id(db, before_id, limit=limit)
+    if not msgs:
+        return []
+    mids = [m.id for m in msgs]
+    rmap = await reactions_map_global(db, mids)
+    return [global_message_to_response(m, reactions=rmap.get(m.id)) for m in msgs]
 
 
 @router.get("/global/context")

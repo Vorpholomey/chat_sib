@@ -1,6 +1,6 @@
 """Private messaging REST: conversations list and message history."""
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,9 +16,11 @@ from app.schemas.message import (
     PrivateMessageResponse,
 )
 from app.services.message import (
+    CHAT_PAGE_SIZE,
     create_private_message,
     get_conversations,
     get_private_messages,
+    get_private_messages_before_id,
     notify_private_event,
     private_message_to_response,
     private_message_to_rest_dict,
@@ -84,17 +86,23 @@ async def create_private_message_rest(
 async def get_messages_with_user(
     user_id: int,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: Annotated[int, Query(ge=1, le=100)] = CHAT_PAGE_SIZE,
+    before_id: Annotated[Optional[int], Query(ge=1, description="Load only messages older than this id")] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Message history with a specific user (pagination, newest first)."""
+    """Message history with a specific user: chronological order, newest page by default or older via `before_id`."""
     if user_id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot get messages with yourself")
     other = await get_user_by_id(db, user_id)
     if not other:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    messages = await get_private_messages(db, current_user.id, user_id, skip=skip, limit=limit)
+    if before_id is not None:
+        messages = await get_private_messages_before_id(
+            db, current_user.id, user_id, before_id, limit=limit
+        )
+    else:
+        messages = await get_private_messages(db, current_user.id, user_id, skip=skip, limit=limit)
     ids = [m.id for m in messages]
     rmap = await reactions_map_private(db, ids)
     return [

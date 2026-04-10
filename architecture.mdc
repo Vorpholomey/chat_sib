@@ -75,15 +75,16 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 ### 2.4 WebSocket protocol (`/ws/chat`)
 
-- One connection per authenticated user; server sends **history** (global messages) and **pin state** after connect. **Permanently banned** accounts cannot open the socket (close code `4003`).
+- One connection per authenticated user; server sends **pin state** and the **last 20 global messages** (not the full history), then **`global_history_ready`**. **Permanently banned** accounts cannot open the socket (close code `4003`). Older global messages load via **`GET /api/messages/global/history?before_id=`** when the client scrolls up.
 - Inbound JSON can target the **global room** or a **private** peer via `recipient_id`.
-- Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`) so the client can branch without guessing shapes.
+- Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`, `global_history_ready`) so the client can branch without guessing shapes.
 
 ### 2.5 REST surface (conceptual)
 
 - **Auth**: register, login, refresh (prefix depends on router mounting — see OpenAPI `/docs`).
-- **Users / private**: sidebar user list (excludes accounts **permanently** banned from public chat), “me”, conversations, paged private history.
+- **Users / private**: sidebar user list (excludes accounts **permanently** banned from public chat), “me”, conversations, paged private history (`GET /api/private/messages/{user_id}` with `limit` default 20 and optional `before_id` for older pages; chronological in the JSON response).
 - **Messages**: global CRUD, pin/unpin, and related broadcasts; private message updates as implemented in `messages` and `services.message`.
+- **Global history page**: `GET /api/messages/global/history?before_id=&limit=` returns global messages strictly **older** than `before_id` (chronological list, same payload shape as WebSocket). **403** if the user is permanently banned from public chat.
 - **Global context window**: `GET /api/messages/global/context?message_id=&before=&after=` returns a slice of global messages around an id (same payload shape as WebSocket history), used to jump to a pinned message that is not in the currently loaded client window (e.g. older than the last N messages). **403** if the user is permanently banned from public chat.
 - **Upload**: multipart upload → public URL path under `/uploads/...`.
 - **Moderation**: ban user from public chat, change role (admin).

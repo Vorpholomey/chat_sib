@@ -183,6 +183,7 @@ export function useChatSocket() {
 
   const connect = useCallback(() => {
     if (!token) return;
+    useChatStore.getState().setGlobalHistoryReady(false);
     clearTimer();
     try {
       wsRef.current?.close();
@@ -199,6 +200,10 @@ export function useChatSocket() {
     ws.onmessage = (ev) => {
       try {
         const raw = JSON.parse(ev.data as string);
+        if (isRecord(raw) && raw.type === "global_history_ready") {
+          useChatStore.getState().setGlobalHistoryReady(true);
+          return;
+        }
         const me = useAuthStore.getState().user?.id;
         const parsed = parseIncoming(raw, me);
         if (parsed === "skip") return;
@@ -285,6 +290,7 @@ export function useChatSocket() {
 
   useEffect(() => {
     if (!token) {
+      useChatStore.getState().setGlobalHistoryReady(false);
       try {
         wsRef.current?.close();
       } catch {
