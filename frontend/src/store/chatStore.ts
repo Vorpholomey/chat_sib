@@ -15,7 +15,11 @@ type ChatState = {
   setGlobalLines: (lines: ChatLine[]) => void;
   /** Merge into global lines by id (for jump-to / loaded window around a message). */
   mergeGlobalLines: (lines: ChatLine[]) => void;
+  /** Merge into private lines for a peer (prepend older pages). */
+  mergePrivateLines: (peerId: number, lines: ChatLine[]) => void;
   setPrivateLines: (peerId: number, lines: ChatLine[]) => void;
+  globalHistoryReady: boolean;
+  setGlobalHistoryReady: (ready: boolean) => void;
   setPinnedGlobalMessages: (lines: ChatLine[]) => void;
   updateLineById: (
     id: string | number,
@@ -41,6 +45,9 @@ export const useChatStore = create<ChatState>((set) => ({
   globalLines: [],
   privateLines: {},
   pinnedGlobalMessages: [],
+  globalHistoryReady: false,
+
+  setGlobalHistoryReady: (ready) => set({ globalHistoryReady: ready }),
 
   setMode: (mode) => set({ mode }),
   setPeer: (peerId) => set({ peerId }),
@@ -71,6 +78,23 @@ export const useChatStore = create<ChatState>((set) => ({
         (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
       );
       return { globalLines: merged };
+    }),
+
+  mergePrivateLines: (peerId, incoming) =>
+    set((s) => {
+      const prev = s.privateLines[peerId] ?? [];
+      const byId = new Map<string | number, ChatLine>();
+      for (const l of prev) {
+        byId.set(l.id, l);
+      }
+      for (const l of incoming) {
+        byId.set(l.id, l);
+      }
+      const merged = Array.from(byId.values());
+      merged.sort(
+        (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+      );
+      return { privateLines: { ...s.privateLines, [peerId]: merged } };
     }),
 
   setPrivateLines: (peerId, lines) =>
@@ -140,6 +164,7 @@ export const useChatStore = create<ChatState>((set) => ({
       globalLines: [],
       privateLines: {},
       pinnedGlobalMessages: [],
+      globalHistoryReady: false,
     }),
 }));
 

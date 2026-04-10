@@ -7,6 +7,9 @@ import { useAuthStore } from "../store/authStore";
 import type { ContentType } from "../types/chat";
 import type { UserRole } from "../types/user";
 
+/** Matches backend `CHAT_PAGE_SIZE`: initial WS batch and scroll-up pagination. */
+export const CHAT_PAGE_SIZE = 10;
+
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
@@ -115,6 +118,22 @@ export async function unpinGlobalMessage(messageId: number | string) {
   try {
     const { data } = await api.delete(`/api/messages/${messageId}/pin`);
     return data as unknown;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+/** Older global messages before `beforeId` (same shape as WebSocket payloads). */
+export async function fetchGlobalHistoryBefore(
+  beforeId: number | string,
+  limit: number = CHAT_PAGE_SIZE
+) {
+  try {
+    const { data } = await api.get<unknown[]>("/api/messages/global/history", {
+      params: { before_id: beforeId, limit },
+    });
+    return data;
   } catch (e) {
     toast.error(errMessage(e));
     throw e;

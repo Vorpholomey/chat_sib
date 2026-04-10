@@ -71,9 +71,10 @@ Then `createdb chat_db` if needed and `alembic upgrade head` again.
 - **Messages (REST)**: under `/api/messages` — global create/edit/delete, pin/unpin, moderation-related flows as implemented
 - **Moderation**: under `/api/users` — ban, role updates (moderator/admin)
 - **Upload**: `POST /upload` (returns URL for messages)
-- **Private**: `GET /api/private/me`, `GET /api/private/conversations`, `GET /api/private/messages/{user_id}?skip=0&limit=50`
+- **Private**: `GET /api/private/me`, `GET /api/private/conversations`, `GET /api/private/messages/{user_id}?limit=20` (optional `before_id` for older pages; optional `skip` when `before_id` omitted)
+- **Global history**: `GET /api/messages/global/history?before_id=&limit=20` (messages older than `before_id`)
 - **WebSocket**: `WS /ws/chat?token=<access_token>`
-  - On connect: pin state and last global messages (history).
+  - On connect: pin state, last **20** global messages, then `{"type":"global_history_ready"}`.
   - Global: `{"text": "...", "content_type": "text"|"image"|"gif", ...}`.
   - Private: include `recipient_id`.
 - **Static**: `GET /uploads/<filename>` serves uploaded files (default upload dir is `uploads/` relative to the process working directory — run from `backend/` so files land under `backend/uploads/`).

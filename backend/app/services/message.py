@@ -26,6 +26,8 @@ from app.schemas.message import (
 )
 
 GLOBAL_CHAT_LIMIT = 1000
+# Page size for initial WS history and REST pagination (global + private).
+CHAT_PAGE_SIZE = 20
 
 _AUDIT_GLOBAL_EDIT = "global_message_edit"
 _AUDIT_GLOBAL_DELETE = "global_message_delete"
@@ -54,6 +56,25 @@ async def get_last_global_messages(db: AsyncSession, limit: int = GLOBAL_CHAT_LI
             selectinload(GlobalMessage.reply_to).selectinload(GlobalMessage.user),
         )
         .order_by(desc(GlobalMessage.created_at))
+        .limit(limit)
+    )
+    messages = list(result.scalars().all())
+    messages.reverse()
+    return messages
+
+
+async def get_global_messages_before_id(
+    db: AsyncSession, before_id: int, limit: int = CHAT_PAGE_SIZE
+) -> list[GlobalMessage]:
+    """Global messages strictly older than `before_id` (by primary key), chronological order."""
+    result = await db.execute(
+        select(GlobalMessage)
+        .where(GlobalMessage.id < before_id)
+        .options(
+            selectinload(GlobalMessage.user),
+            selectinload(GlobalMessage.reply_to).selectinload(GlobalMessage.user),
+        )
+        .order_by(desc(GlobalMessage.id))
         .limit(limit)
     )
     messages = list(result.scalars().all())
@@ -604,6 +625,36 @@ async def get_private_messages(
         )
         .order_by(desc(PrivateMessage.created_at))
         .offset(skip)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_private_messages_before_id(
+    db: AsyncSession,
+    current_user_id: int,
+    other_user_id: int,
+    before_id: int,
+    limit: int = CHAT_PAGE_SIZE,
+) -> list[PrivateMessage]:
+    """Private messages strictly older than `before_id`, newest-first query then reversed by caller."""
+    result = await db.execute(
+        select(PrivateMessage)
+        .options(
+            selectinload(PrivateMessage.sender),
+            selectinload(PrivateMessage.recipient),
+            selectinload(PrivateMessage.reply_to).selectinload(PrivateMessage.sender),
+        )
+        .where(
+            and_(
+                or_(
+                    and_(PrivateMessage.sender_id == current_user_id, PrivateMessage.recipient_id == other_user_id),
+                    and_(PrivateMessage.sender_id == other_user_id, PrivateMessage.recipient_id == current_user_id),
+                ),
+                PrivateMessage.id < before_id,
+            )
+        )
+        .order_by(desc(PrivateMessage.created_at))
         .limit(limit)
     )
     return list(result.scalars().all())
