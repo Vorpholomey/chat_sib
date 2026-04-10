@@ -25,20 +25,6 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-alembic upgrade head
-uvicorn app.main:app --reload
-```
-
-
-
-
-
 API: `http://127.0.0.1:8000` · OpenAPI: `/docs`
 
 **Frontend**:
@@ -62,6 +48,43 @@ docker compose --env-file compose.env up --build
 ```
 
 Open **`http://localhost:8080`** (override with `HTTP_PORT` in `compose.env`). Uploads and the database persist in Docker volumes (`uploads`, `pgdata`).
+
+## GitHub and Docker Hub
+
+**Push the project to GitHub** (one-time):
+
+```bash
+git init   # if this folder is not already a repo
+git remote add origin https://github.com/YOUR_ORG/chat_sib.git
+git branch -M main
+git add -A && git commit -m "Initial commit"
+git push -u origin main
+```
+
+Use SSH (`git@github.com:YOUR_ORG/chat_sib.git`) if you prefer SSH keys.
+
+**Publish images from GitHub to Docker Hub**: the workflow [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) builds `backend/` and `frontend/` and pushes:
+
+- `YOUR_DOCKERHUB_USER/chat_sib-backend`
+- `YOUR_DOCKERHUB_USER/chat_sib-frontend`
+
+**Repository secrets** (GitHub → *Settings* → *Secrets and variables* → *Actions*):
+
+| Secret | Value |
+|--------|--------|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username or organization name |
+| `DOCKERHUB_TOKEN` | A [Docker Hub access token](https://docs.docker.com/security/for-developers/access-tokens/) (not your account password) |
+
+Runs on every push to **`main`**, on **`v*`** tags (semver tags on images), and on **workflow dispatch**. Images are tagged with `latest` (main only), short Git SHA, and semver when you push a version tag.
+
+**Pull locally** (after a successful run):
+
+```bash
+docker pull YOUR_DOCKERHUB_USER/chat_sib-backend:latest
+docker pull YOUR_DOCKERHUB_USER/chat_sib-frontend:latest
+```
+
+Use those image names in your own compose or orchestration, or keep building from this repo with `docker compose ... up --build`.
 
 ## Configuration note
 

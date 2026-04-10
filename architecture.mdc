@@ -17,6 +17,7 @@ chat_sib/
 ├── architecture.mdc      # This file (Cursor rule + human-readable reference)
 ├── README.md             # Monorepo entry: quick start for both apps
 ├── docker-compose.yml    # Postgres + API + nginx (production-style stack)
+├── .github/workflows/    # CI: build/push Docker images to Docker Hub
 ├── compose.env.example   # Template for docker compose secrets/overrides (copy to compose.env)
 ├── backend/              # Python API, migrations, uploads working directory
 │   ├── Dockerfile
@@ -43,6 +44,13 @@ chat_sib/
 
 - **`docker-compose.yml`** runs **PostgreSQL**, the **FastAPI** image (migrations on container start, uploads on a named volume), and **nginx** serving the built SPA on port **8080** (configurable via `HTTP_PORT`). The browser talks only to nginx; nginx proxies `/api`, `/auth`, `/upload`, `/uploads`, `/ws`, `/docs`, and `/openapi.json` to the backend. Set **`SECRET_KEY`** (and optionally DB credentials) via **`compose.env`** — see **`compose.env.example`** and the root **`README.md`**.
 - Production builds omit **`VITE_API_URL`** so HTTP and WebSocket clients use **same-origin** URLs relative to the page; set **`VITE_API_URL`** only when the API is hosted on a different origin than the static app.
+
+### 1.2 CI: GitHub → Docker Hub
+
+- **Workflow**: `.github/workflows/docker-publish.yml` runs on pushes to **`main`**, on **`v*`** git tags, and on manual **workflow dispatch**. It builds **`backend/Dockerfile`** and **`frontend/Dockerfile`** with Docker Buildx and pushes to Docker Hub.
+- **Image names**: `{DOCKERHUB_USERNAME}/chat_sib-backend` and `{DOCKERHUB_USERNAME}/chat_sib-frontend` (namespace comes from the GitHub Actions secret **`DOCKERHUB_USERNAME`**).
+- **Tags**: `latest` (commits on `main` only), short commit SHA on every run, and **semver** tags when the git ref is a version tag (e.g. `v1.2.3`).
+- **Secrets** (GitHub repository *Settings → Secrets and variables → Actions*): **`DOCKERHUB_USERNAME`** (user or org on Docker Hub) and **`DOCKERHUB_TOKEN`** (access token). The database service is not built here; production stacks still use an official Postgres image or managed DB.
 
 ## 2. Backend architecture
 
