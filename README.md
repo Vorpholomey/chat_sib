@@ -95,3 +95,4 @@ Environment variables for the API live in **`backend/.env`** (see `backend/.env.
 - Backend setup and API overview: [`backend/README.md`](backend/README.md)
 - Frontend scripts and env: [`frontend/README.md`](frontend/README.md)
 - Architecture (full): [`architecture.mdc`](architecture.mdc)
+
