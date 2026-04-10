@@ -13,6 +13,7 @@ env/
 
 # Environment variables
 .env
+compose.env
 
 # IDEs
 .vscode/

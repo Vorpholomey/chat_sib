@@ -16,13 +16,19 @@ This document describes the **chat_sib** repository: a full-stack, real-time cha
 chat_sib/
 ├── architecture.mdc      # This file (Cursor rule + human-readable reference)
 ├── README.md             # Monorepo entry: quick start for both apps
+├── docker-compose.yml    # Postgres + API + nginx (production-style stack)
+├── compose.env.example   # Template for docker compose secrets/overrides (copy to compose.env)
 ├── backend/              # Python API, migrations, uploads working directory
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh   # alembic upgrade then uvicorn
 │   ├── app/              # FastAPI application package
 │   ├── alembic/          # SQL migrations
 │   ├── alembic.ini
 │   ├── requirements.txt
 │   └── .env.example      # Copy to .env; secrets never committed
 └── frontend/             # Vite + React SPA
+    ├── Dockerfile        # Multi-stage: Vite build + nginx static + API proxy
+    ├── nginx.conf        # SPA fallback; proxies API/WS to backend service
     ├── src/
     ├── package.json
     └── .env.example      # VITE_* for production builds
@@ -32,6 +38,11 @@ chat_sib/
 
 - **Backend** owns persistence, authentication, authorization, WebSocket fan-out, file storage paths, and REST/OpenAPI contracts.
 - **Frontend** owns routing, UI state, optimistic UX, and calling the API/WebSocket using the same URL paths the backend exposes (often via the Vite dev proxy).
+
+### 1.1 Docker deployment
+
+- **`docker-compose.yml`** runs **PostgreSQL**, the **FastAPI** image (migrations on container start, uploads on a named volume), and **nginx** serving the built SPA on port **8080** (configurable via `HTTP_PORT`). The browser talks only to nginx; nginx proxies `/api`, `/auth`, `/upload`, `/uploads`, `/ws`, `/docs`, and `/openapi.json` to the backend. Set **`SECRET_KEY`** (and optionally DB credentials) via **`compose.env`** — see **`compose.env.example`** and the root **`README.md`**.
+- Production builds omit **`VITE_API_URL`** so HTTP and WebSocket clients use **same-origin** URLs relative to the page; set **`VITE_API_URL`** only when the API is hosted on a different origin than the static app.
 
 ## 2. Backend architecture
 

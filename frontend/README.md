@@ -10,10 +10,10 @@ npm run build
 
 ## Environment
 
-Copy `.env.example` to `.env` for **production** builds (when not using the Vite dev proxy):
+For **production** builds, leave **`VITE_API_URL` unset** when the SPA is served behind the same host as the API (e.g. Docker nginx), so requests use same-origin paths. Set it when the API lives on another origin:
 
 ```env
-VITE_API_URL=http://127.0.0.1:8000
+VITE_API_URL=https://api.example.com
 ```
 
 In **development**, `VITE_API_URL` is empty and the app calls the same origin (`localhost:5173`); `vite.config.ts` proxies API and WebSocket traffic to the FastAPI server.

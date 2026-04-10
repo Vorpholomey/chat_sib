@@ -51,6 +51,18 @@ npm run dev -- --host
 
 Dev UI: `http://127.0.0.1:5173` — Vite proxies `/api`, `/auth`, `/upload`, `/uploads`, and `/ws` to the backend on port 8000.
 
+## Docker
+
+PostgreSQL, the API (with migrations on startup), and an **nginx** front serving the built SPA and proxying `/api`, `/auth`, `/upload`, `/uploads`, `/ws`, and `/docs` to the backend.
+
+```bash
+cp compose.env.example compose.env
+# Edit compose.env: set SECRET_KEY (≥ 32 characters)
+docker compose --env-file compose.env up --build
+```
+
+Open **`http://localhost:8080`** (override with `HTTP_PORT` in `compose.env`). Uploads and the database persist in Docker volumes (`uploads`, `pgdata`).
+
 ## Configuration note
 
 Environment variables for the API live in **`backend/.env`** (see `backend/.env.example`). If you previously used a `.env` at the repository root, move or copy it into `backend/`.

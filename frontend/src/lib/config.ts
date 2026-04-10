@@ -1,6 +1,8 @@
-/** API base for production; in dev Vite proxy uses same-origin relative paths. */
-export const API_BASE =
-  import.meta.env.DEV ? "" : import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+/**
+ * API base: dev uses Vite proxy (empty = same origin).
+ * Production: empty = same origin (e.g. nginx in Docker); set VITE_API_URL if the API is on another host.
+ */
+export const API_BASE = import.meta.env.DEV ? "" : import.meta.env.VITE_API_URL || "";
 
 /**
  * Resolves upload/media paths for <img src>. Rejects protocol-relative URLs,
@@ -25,7 +27,7 @@ export function assetUrl(path: string): string {
   }
   const base = import.meta.env.DEV
     ? window.location.origin
-    : import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+    : import.meta.env.VITE_API_URL || window.location.origin;
   return `${base.replace(/\/$/, "")}${t.startsWith("/") ? t : `/${t}`}`;
 }
 
@@ -35,10 +37,14 @@ export function wsChatUrl(token: string): string {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws/chat?token=${enc}`;
   }
-  const api = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-  const u = new URL(api);
-  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-  u.pathname = "/ws/chat";
-  u.search = `?token=${enc}`;
-  return u.toString();
+  const api = import.meta.env.VITE_API_URL;
+  if (api) {
+    const u = new URL(api);
+    u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    u.pathname = "/ws/chat";
+    u.search = `?token=${enc}`;
+    return u.toString();
+  }
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/chat?token=${enc}`;
 }
