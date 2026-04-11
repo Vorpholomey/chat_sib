@@ -20,8 +20,57 @@ const PURIFY_WITH_MARK = {
   ALLOW_DATA_ATTR: false,
 };
 
+/**
+ * Browsers often append NBSP in contenteditable; serialization can leave `&nbsp;`
+ * in the string. Without tags, messages look "plain" but show literal "&nbsp;".
+ * Strip trailing whitespace / NBSP from the sanitized DOM tree.
+ */
+function normalizeTrailingWhitespaceInSanitizedHtml(html: string): string {
+  if (typeof document === "undefined" || !html.trim()) return html;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+
+  const stripFrom = (node: ParentNode): void => {
+    while (node.lastChild) {
+      const last = node.lastChild;
+      if (last.nodeType === Node.TEXT_NODE) {
+        const text = last as Text;
+        const next = text.data.replace(/[\s\u00a0]+$/u, "");
+        if (next.length === 0) {
+          node.removeChild(last);
+          continue;
+        }
+        if (next !== text.data) text.data = next;
+        return;
+      }
+      if (last.nodeType === Node.ELEMENT_NODE) {
+        stripFrom(last as ParentNode);
+        if ((last as Element).childNodes.length === 0) {
+          node.removeChild(last);
+          continue;
+        }
+        return;
+      }
+      return;
+    }
+  };
+
+  stripFrom(tmp);
+  return tmp.innerHTML;
+}
+
+/** Decode nbsp-related HTML references so plain (non-rich) bodies never show "&nbsp;". */
+export function decodePlainMessageEntities(s: string): string {
+  if (!s.includes("&")) return s;
+  return s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#0*160;/g, " ")
+    .replace(/&#x0*A0;/gi, " ");
+}
+
 export function sanitizeMessageHtml(html: string): string {
-  return String(DOMPurify.sanitize(html, PURIFY));
+  const clean = String(DOMPurify.sanitize(html, PURIFY));
+  return normalizeTrailingWhitespaceInSanitizedHtml(clean);
 }
 
 function escapeRegExp(s: string): string {
@@ -74,7 +123,7 @@ export function htmlToPlainPreview(html: string, maxLen = 160): string {
 /** Short plain snippet for reply rows (strips HTML when present). */
 export function messagePlainPreview(body: string, maxLen = 500): string {
   if (!looksLikeRichHtml(body)) {
-    const t = body.trim();
+    const t = decodePlainMessageEntities(body).trim();
     if (t.length > maxLen) return `${t.slice(0, maxLen)}…`;
     return t;
   }

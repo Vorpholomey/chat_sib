@@ -1,6 +1,7 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { escapeRegExp } from "../lib/messageSearch";
 import {
+  decodePlainMessageEntities,
   highlightSearchInSanitizedHtml,
   looksLikeRichHtml,
   sanitizeMessageHtml,
@@ -55,12 +56,16 @@ function MessageRichTextInner({ body, className = "", searchHighlight }: Props) 
     if (!isRich || !searchHighlight?.trim()) return safeHtml;
     return highlightSearchInSanitizedHtml(safeHtml, searchHighlight);
   }, [isRich, safeHtml, searchHighlight]);
+  const plainBody = useMemo(
+    () => decodePlainMessageEntities(body),
+    [body]
+  );
   if (!isRich) {
     return (
       <span className={`whitespace-pre-wrap break-words ${className}`}>
         {searchHighlight?.trim()
-          ? highlightPlainSegments(body, searchHighlight)
-          : body}
+          ? highlightPlainSegments(plainBody, searchHighlight)
+          : plainBody}
       </span>
     );
   }
