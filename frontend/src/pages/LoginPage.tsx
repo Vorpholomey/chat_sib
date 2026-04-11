@@ -35,7 +35,7 @@ export function LoginPage() {
           <input
             type="email"
             required
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-base"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -45,7 +45,7 @@ export function LoginPage() {
           <input
             type="password"
             required
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-base"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />

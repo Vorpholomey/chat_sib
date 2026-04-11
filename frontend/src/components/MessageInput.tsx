@@ -241,7 +241,7 @@ export function MessageInput({
           {isEditing ? "Save" : "Send"}
         </button>
       </div>
-      <p className="text-xs text-slate-600">
+      <p className="hidden text-xs text-slate-600 sm:block">
         Drag & drop an image to attach · Shift+Enter for a new line · Right-click
         selected text to format
       </p>

@@ -368,11 +368,11 @@ export function MessageThread({
     : null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={threadRef}
         onScroll={handleThreadScroll}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2"
       >
         {lines.length === 0 ? (
           <p className="m-auto text-center text-sm text-slate-500">{emptyHint}</p>

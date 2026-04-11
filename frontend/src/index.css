@@ -1,14 +1,27 @@
 @import "tailwindcss";
 
-html,
+html {
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body,
 #root {
   height: 100%;
   margin: 0;
+  min-height: 100dvh;
 }
 
 body {
   @apply bg-slate-950 text-slate-100 antialiased;
+  overflow-x: hidden;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 @keyframes pin-preview-in {

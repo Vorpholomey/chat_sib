@@ -8,9 +8,9 @@ import { RegisterPage } from "./pages/RegisterPage";
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex h-full min-h-screen flex-col">
+      <div className="flex h-full min-h-dvh min-w-0 flex-col">
         <Toaster richColors position="top-center" />
-        <main className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-3 py-4">
+        <main className="mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(0.75rem,env(safe-area-inset-right))]">
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />

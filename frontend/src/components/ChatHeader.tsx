@@ -139,7 +139,7 @@ export function ChatHeader({
                 placeholder="Search messages..."
                 value={ms.draft}
                 onChange={(e) => ms.onDraftChange(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-sm text-slate-100 shadow-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-base text-slate-100 shadow-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
               />
               <button
                 type="submit"

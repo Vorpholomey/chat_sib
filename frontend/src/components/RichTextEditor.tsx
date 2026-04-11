@@ -308,7 +308,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
       <div className={className}>
         <div className="relative min-w-0 flex-1">
           {empty && (
-            <div className="pointer-events-none absolute left-3 top-2 z-0 text-sm text-slate-500">
+            <div className="pointer-events-none absolute left-3 top-2 z-0 text-base text-slate-500">
               {placeholder}
             </div>
           )}
@@ -318,7 +318,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
             role="textbox"
             aria-multiline="true"
             aria-label={ariaLabel}
-            className={`relative z-10 min-h-[40px] max-h-48 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-violet-500 focus:outline-none [&_a]:text-violet-400 [&_a]:underline`}
+            className={`relative z-10 min-h-[40px] max-h-48 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-base text-slate-100 focus:border-violet-500 focus:outline-none [&_a]:text-violet-400 [&_a]:underline`}
             suppressContentEditableWarning
             onInput={syncEmpty}
             onKeyDown={onKeyDown}
