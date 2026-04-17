@@ -25,6 +25,7 @@ class GlobalMessage(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    caption: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     message_type: Mapped[MessageType] = mapped_column(
         Enum(MessageType),
         default=MessageType.text,

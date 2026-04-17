@@ -21,7 +21,7 @@ import {
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
-import { textForMessageSearch } from "../lib/messageSearch";
+import { lineTextForSearch } from "../lib/messageSearch";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
@@ -36,6 +36,7 @@ type PrivateMsgApi = {
   recipient_id: number;
   content: string;
   message_type: "text" | "image" | "gif";
+  caption?: string | null;
   is_read: boolean;
   created_at: string;
   edited_at?: string;
@@ -248,11 +249,7 @@ export function ChatPage() {
     }
     const lower = q.toLowerCase();
     const ids = lines
-      .filter(
-        (l) =>
-          l.contentType === "text" &&
-          textForMessageSearch(l.body).toLowerCase().includes(lower)
-      )
+      .filter((l) => lineTextForSearch(l).toLowerCase().includes(lower))
       .map((l) => l.id);
     setMsgSearchMatchIds(ids);
     setMsgSearchActiveIdx(0);
@@ -680,9 +677,9 @@ export function ChatPage() {
             editingLine={editingLine}
             onCancelEdit={() => setEditingLine(null)}
             onSubmitEdit={handleSubmitEdit}
-            onSendText={(text, contentType, replyToId) => {
+            onSendText={(text, contentType, replyToId, caption) => {
               try {
-                sendActive(text, contentType, replyToId);
+                sendActive(text, contentType, replyToId, caption);
                 setReplyTo(null);
               } catch {
                 toast.error("Send failed");

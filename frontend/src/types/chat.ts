@@ -23,6 +23,8 @@ export type ChatLine = {
   /** Label before colon */
   author: string;
   body: string;
+  /** Rich-text caption for image/gif messages (optional) */
+  caption?: string;
   contentType: ContentType;
   senderId?: number;
   recipientId?: number;

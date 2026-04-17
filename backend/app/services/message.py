@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any, Optional
 
 from sqlalchemy import asc, desc, select, or_, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.rich_text import prepare_stored_message_content
+from app.core.rich_text import prepare_optional_caption_html, prepare_stored_message_content
 from app.core.websocket_manager import ws_manager
 from app.db.session import async_session_maker
 from app.models.chat_settings import ChatSettings
@@ -150,16 +152,31 @@ async def get_private_message_by_id(db: AsyncSession, message_id: int) -> Option
     return result.scalar_one_or_none()
 
 
+def _reply_snippet_text(
+    content: str, message_type: MessageType, caption: Optional[str]
+) -> str:
+    if message_type == MessageType.text:
+        return (content or "")[:500]
+    cap = caption or ""
+    if cap.strip():
+        plain = re.sub(r"<[^>]+>", "", cap)
+        plain = unescape(plain).strip()
+        if plain:
+            return plain[:500]
+    return "[image]"
+
+
 def _reply_preview_global(msg: GlobalMessage) -> Optional[dict[str, Any]]:
     if not msg.reply_to:
         return None
     u = msg.reply_to.user
+    rt = msg.reply_to
     return {
-        "id": msg.reply_to.id,
-        "user_id": msg.reply_to.user_id,
+        "id": rt.id,
+        "user_id": rt.user_id,
         "username": u.username if u else None,
-        "text": (msg.reply_to.content or "")[:500],
-        "content_type": msg.reply_to.message_type.value,
+        "text": _reply_snippet_text(rt.content, rt.message_type, rt.caption),
+        "content_type": rt.message_type.value,
     }
 
 
@@ -167,12 +184,13 @@ def _reply_preview_private(msg: PrivateMessage) -> Optional[dict[str, Any]]:
     if not msg.reply_to:
         return None
     s = msg.reply_to.sender
+    rt = msg.reply_to
     return {
-        "id": msg.reply_to.id,
-        "sender_id": msg.reply_to.sender_id,
+        "id": rt.id,
+        "sender_id": rt.sender_id,
         "username": s.username if s else None,
-        "text": (msg.reply_to.content or "")[:500],
-        "content_type": msg.reply_to.message_type.value,
+        "text": _reply_snippet_text(rt.content, rt.message_type, rt.caption),
+        "content_type": rt.message_type.value,
     }
 
 
@@ -186,6 +204,7 @@ def global_message_to_rest_dict(
         "username": msg.user.username if msg.user else "",
         "text": msg.content,
         "content_type": msg.message_type,
+        "caption": msg.caption,
         "created_at": msg.created_at,
         "edited_at": msg.edited_at,
         "reply_to_id": msg.reply_to_id,
@@ -205,6 +224,7 @@ def private_message_to_rest_dict(
         "recipient_id": msg.recipient_id,
         "content": msg.content,
         "message_type": msg.message_type,
+        "caption": msg.caption,
         "is_read": msg.is_read,
         "created_at": msg.created_at,
         "edited_at": msg.edited_at,
@@ -229,6 +249,7 @@ def global_message_to_response(
         "username": msg.user.username if msg.user else None,
         "text": msg.content,
         "content_type": msg.message_type.value,
+        "caption": msg.caption,
         "created_at": msg.created_at.isoformat() if msg.created_at else None,
         "edited_at": msg.edited_at.isoformat() if msg.edited_at else None,
         "reply_to_id": msg.reply_to_id,
@@ -253,6 +274,7 @@ def private_message_to_response(
         "recipient_id": msg.recipient_id,
         "content": msg.content,
         "message_type": msg.message_type.value,
+        "caption": msg.caption,
         "is_read": msg.is_read,
         "created_at": msg.created_at.isoformat() if msg.created_at else None,
         "edited_at": msg.edited_at.isoformat() if msg.edited_at else None,
@@ -272,15 +294,23 @@ async def create_global_message(
     content: str,
     message_type: MessageType = MessageType.text,
     reply_to_id: Optional[int] = None,
+    caption: Optional[str] = None,
 ) -> GlobalMessage:
     if reply_to_id is not None:
         parent = await get_global_message_by_id(db, reply_to_id)
         if not parent:
             raise ValueError("reply_to_id not found")
+    if message_type == MessageType.text:
+        if caption is not None and caption.strip():
+            raise ValueError("Caption is only allowed for image or gif messages")
+        cap: Optional[str] = None
+    else:
+        cap = prepare_optional_caption_html(caption)
     stored = prepare_stored_message_content(content, message_type)
     msg = GlobalMessage(
         user_id=user_id,
         content=stored,
+        caption=cap,
         message_type=message_type,
         reply_to_id=reply_to_id,
     )
@@ -299,6 +329,7 @@ async def create_private_message(
     content: str,
     message_type: MessageType = MessageType.text,
     reply_to_id: Optional[int] = None,
+    caption: Optional[str] = None,
 ) -> PrivateMessage:
     if reply_to_id is not None:
         parent = await get_private_message_by_id(db, reply_to_id)
@@ -307,11 +338,18 @@ async def create_private_message(
         participants = {parent.sender_id, parent.recipient_id}
         if sender_id not in participants or recipient_id not in participants:
             raise ValueError("reply does not belong to this conversation")
+    if message_type == MessageType.text:
+        if caption is not None and caption.strip():
+            raise ValueError("Caption is only allowed for image or gif messages")
+        cap = None
+    else:
+        cap = prepare_optional_caption_html(caption)
     stored = prepare_stored_message_content(content, message_type)
     msg = PrivateMessage(
         sender_id=sender_id,
         recipient_id=recipient_id,
         content=stored,
+        caption=cap,
         message_type=message_type,
         reply_to_id=reply_to_id,
     )
@@ -329,6 +367,8 @@ async def update_global_message(
     actor: User,
     new_text: str,
     new_type: MessageType,
+    new_caption: Optional[str] = None,
+    apply_caption_change: bool = False,
 ) -> GlobalMessage:
     msg = await get_global_message_by_id(db, message_id)
     if not msg:
@@ -342,6 +382,10 @@ async def update_global_message(
     old_preview = {"content": msg.content[:500], "message_type": msg.message_type.value}
     msg.content = prepare_stored_message_content(new_text, new_type)
     msg.message_type = new_type
+    if new_type == MessageType.text:
+        msg.caption = None
+    elif apply_caption_change:
+        msg.caption = prepare_optional_caption_html(new_caption)
     msg.edited_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(msg, attribute_names=["user", "reply_to"])
@@ -389,6 +433,8 @@ async def update_private_message(
     actor: User,
     new_text: str,
     new_type: MessageType,
+    new_caption: Optional[str] = None,
+    apply_caption_change: bool = False,
 ) -> PrivateMessage:
     msg = await get_private_message_by_id(db, message_id)
     if not msg:
@@ -404,6 +450,10 @@ async def update_private_message(
     old_preview = {"content": msg.content[:500], "message_type": msg.message_type.value}
     msg.content = prepare_stored_message_content(new_text, new_type)
     msg.message_type = new_type
+    if new_type == MessageType.text:
+        msg.caption = None
+    elif apply_caption_change:
+        msg.caption = prepare_optional_caption_html(new_caption)
     msg.edited_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(msg, attribute_names=["sender", "recipient", "reply_to"])

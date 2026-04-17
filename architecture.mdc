@@ -95,7 +95,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 ### 2.4 WebSocket protocol (`/ws/chat`)
 
 - One connection per authenticated user; server sends **pin state** and the **last 20 global messages** (not the full history), then **`global_history_ready`**. **Permanently banned** accounts cannot open the socket (close code `4003`). Older global messages load via **`GET /api/messages/global/history?before_id=`** when the client scrolls up.
-- Inbound JSON can target the **global room** or a **private** peer via `recipient_id`.
+- Inbound JSON can target the **global room** or a **private** peer via `recipient_id`. For **image** / **gif** messages, optional **`caption`** carries the same sanitized HTML subset as text messages (stored in `caption` columns, separate from the media URL in `content`/`text`).
 - Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`, `global_history_ready`) so the client can branch without guessing shapes.
 
 ### 2.5 REST surface (conceptual)
@@ -111,7 +111,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 ### 2.6 Data model (high level)
 
 - **User**: identity, credentials hash, `UserRole`, ban fields, timestamps.
-- **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented.
+- **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented. **Image/gif** rows store the media URL in `content`; optional **`caption`** holds HTML for an accompanying message (same sanitization rules as text).
 - **ChatSettings**: singleton row for room-level settings (currently no pin column; pins live in **`global_pinned_messages`**).
 - **GlobalPinnedMessage**: one row per pinned global message (`message_id` unique, `pinned_at` updated when re-pinning); **API/WebSocket order** is by **message `created_at`** (newest first), not pin time.
 - **ModerationAuditLog**: audit trail for moderation actions where used.
@@ -120,7 +120,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 ### 2.7 Rich text (formatted chat messages)
 
-- **Text** messages may store a small subset of **HTML** in the same string columns as before (`GlobalMessage.content`, `PrivateMessage.content`): paragraphs/line breaks (`p`, `br`), **bold** / **italic** (`strong`, `b`, `em`, `i`), and **links** (`a` with `http`/`https` only).
+- **Text** messages may store a small subset of **HTML** in the same string columns as before (`GlobalMessage.content`, `PrivateMessage.content`): paragraphs/line breaks (`p`, `br`), **bold** / **italic** (`strong`, `b`, `em`, `i`), and **links** (`a` with `http`/`https` only). **Image/gif** messages use the same HTML subset in optional **`caption`** columns while `content` remains the image URL.
 - **Sanitization**: `app/core/rich_text.py` uses **bleach** on every create/update of text messages (REST, WebSocket, and `services.message` helpers) so scripts and unsafe markup are stripped server-side.
 - **Realtime**: No protocol change; `message_updated` and new `message` payloads carry the HTML string so all connected clients see the same formatted body.
 

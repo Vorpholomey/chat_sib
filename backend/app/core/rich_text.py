@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
 from html import unescape
 from urllib.parse import urlparse
 
@@ -37,6 +38,21 @@ def is_effectively_empty_html(html: str) -> bool:
     text = re.sub(r"<[^>]+>", "", html)
     text = unescape(text)
     return not text.strip()
+
+
+def prepare_optional_caption_html(raw: Optional[str]) -> Optional[str]:
+    """Sanitized HTML for optional image/gif captions; None if absent or empty."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    out = sanitize_message_html(s)
+    if is_effectively_empty_html(out):
+        return None
+    if len(out) > MAX_MESSAGE_CONTENT_LEN:
+        raise ValueError("Caption too long")
+    return out
 
 
 def prepare_stored_message_content(content: str, message_type: MessageType) -> str:

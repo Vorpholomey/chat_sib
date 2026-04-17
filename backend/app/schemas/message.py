@@ -15,6 +15,7 @@ class GlobalMessageCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=65535)
     content_type: MessageType = MessageType.text
     reply_to_id: Optional[int] = None
+    caption: Optional[str] = None
 
 
 class GlobalMessageResponse(BaseModel):
@@ -23,6 +24,7 @@ class GlobalMessageResponse(BaseModel):
     username: str
     text: str
     content_type: MessageType
+    caption: Optional[str] = None
     created_at: datetime
     edited_at: Optional[datetime] = None
     reply_to_id: Optional[int] = None
@@ -35,6 +37,7 @@ class GlobalMessageResponse(BaseModel):
 class GlobalMessageUpdate(BaseModel):
     text: str = Field(..., min_length=1, max_length=65535)
     content_type: MessageType = MessageType.text
+    caption: Optional[str] = None
 
 
 class PrivateMessageCreate(BaseModel):
@@ -42,11 +45,13 @@ class PrivateMessageCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=65535)
     content_type: MessageType = MessageType.text
     reply_to_id: Optional[int] = None
+    caption: Optional[str] = None
 
 
 class PrivateMessageUpdate(BaseModel):
     text: str = Field(..., min_length=1, max_length=65535)
     content_type: MessageType = MessageType.text
+    caption: Optional[str] = None
 
 
 class PrivateMessageResponse(BaseModel):
@@ -55,6 +60,7 @@ class PrivateMessageResponse(BaseModel):
     recipient_id: int
     content: str
     message_type: MessageType
+    caption: Optional[str] = None
     is_read: bool
     created_at: datetime
     edited_at: Optional[datetime] = None
