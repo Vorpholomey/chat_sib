@@ -248,8 +248,10 @@ export function ChatPage() {
     }
     const lower = q.toLowerCase();
     const ids = lines
-      .filter((l) =>
-        textForMessageSearch(l.body).toLowerCase().includes(lower)
+      .filter(
+        (l) =>
+          l.contentType === "text" &&
+          textForMessageSearch(l.body).toLowerCase().includes(lower)
       )
       .map((l) => l.id);
     setMsgSearchMatchIds(ids);

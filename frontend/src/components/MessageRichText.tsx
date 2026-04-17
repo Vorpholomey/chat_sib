@@ -1,9 +1,11 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { escapeRegExp } from "../lib/messageSearch";
 import {
+  decodePlainMessageEntities,
   highlightSearchInSanitizedHtml,
   looksLikeRichHtml,
   sanitizeMessageHtml,
+  splitPlainTextForLinkify,
 } from "../lib/richText";
 
 type Props = {
@@ -13,7 +15,11 @@ type Props = {
   searchHighlight?: string;
 };
 
-function highlightPlainSegments(text: string, query: string): ReactNode {
+function highlightPlainSegments(
+  text: string,
+  query: string,
+  markKeyPrefix = ""
+): ReactNode {
   const q = query.trim();
   if (!q) return text;
   const r = new RegExp(`(${escapeRegExp(q)})`, "gi");
@@ -27,7 +33,7 @@ function highlightPlainSegments(text: string, query: string): ReactNode {
     }
     out.push(
       <mark
-        key={`h-${k++}`}
+        key={`${markKeyPrefix}h-${k++}`}
         className="rounded bg-amber-500/35 px-0.5 text-inherit"
       >
         {m[0]}
@@ -55,12 +61,38 @@ function MessageRichTextInner({ body, className = "", searchHighlight }: Props) 
     if (!isRich || !searchHighlight?.trim()) return safeHtml;
     return highlightSearchInSanitizedHtml(safeHtml, searchHighlight);
   }, [isRich, safeHtml, searchHighlight]);
+  const plainBody = useMemo(
+    () => decodePlainMessageEntities(body),
+    [body]
+  );
+  const plainLinkSegments = useMemo(
+    () => splitPlainTextForLinkify(plainBody),
+    [plainBody]
+  );
   if (!isRich) {
+    const q = searchHighlight?.trim();
     return (
       <span className={`whitespace-pre-wrap break-words ${className}`}>
-        {searchHighlight?.trim()
-          ? highlightPlainSegments(body, searchHighlight)
-          : body}
+        {plainLinkSegments.map((seg, i) =>
+          seg.kind === "text" ? (
+            <Fragment key={`t-${i}`}>
+              {q
+                ? highlightPlainSegments(seg.text, searchHighlight!, `s${i}-`)
+                : seg.text}
+            </Fragment>
+          ) : (
+            <a
+              key={`l-${i}`}
+              href={seg.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all text-violet-400 underline underline-offset-2 hover:text-violet-300"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {seg.label}
+            </a>
+          )
+        )}
       </span>
     );
   }
