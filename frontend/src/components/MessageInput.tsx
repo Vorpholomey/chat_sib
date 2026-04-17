@@ -45,8 +45,15 @@ export function MessageInput({
   const emojiAnchorRef = useRef<HTMLDivElement>(null);
 
   const isEditing = Boolean(editingLine);
-  const initialHtml =
-    editingLine?.contentType === "text" ? editingLine.body : "";
+  const initialHtml = (() => {
+    if (!editingLine) return "";
+    if (editingLine.contentType === "text") return editingLine.body;
+    return editingLine.caption ?? "";
+  })();
+  const editingMedia =
+    isEditing &&
+    editingLine &&
+    (editingLine.contentType === "image" || editingLine.contentType === "gif");
 
   useEffect(() => {
     if (!emojiPickerOpen) return;
@@ -110,18 +117,22 @@ export function MessageInput({
       return;
     }
     const html = richRef.current?.getHtml() ?? "";
-    if (isRichTextEmpty(html)) return;
     if (isEditing && editingLine && onSubmitEdit) {
+      if (editingLine.contentType === "text" && isRichTextEmpty(html)) return;
       await onSubmitEdit(editingLine.id, html);
       onCancelEdit?.();
       return;
     }
+    if (isRichTextEmpty(html)) return;
     onSendText(html, "text", replyTo?.id != null ? Number(replyTo.id) : undefined);
     richRef.current?.clear();
     onClearReply?.();
   };
 
-  const canSend = !isRichTextEmpty(draftHtml);
+  const canSend =
+    isEditing && editingLine && editingLine.contentType !== "text"
+      ? true
+      : !isRichTextEmpty(draftHtml);
 
   return (
     <div className="shrink-0 space-y-2 border-t border-slate-800 pt-3">
@@ -148,7 +159,9 @@ export function MessageInput({
       )}
       {isEditing && editingLine && (
         <div className="flex items-center justify-between gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
-          <span>Editing message</span>
+          <span>
+            {editingMedia ? "Editing image message (caption)" : "Editing message"}
+          </span>
           <button
             type="button"
             className="rounded px-2 py-1 hover:bg-amber-900/50"
@@ -158,6 +171,19 @@ export function MessageInput({
           >
             Cancel
           </button>
+        </div>
+      )}
+      {editingMedia && editingLine && (
+        <div className="flex items-start gap-3 rounded border border-slate-700 bg-slate-900/80 p-2">
+          <img
+            src={assetUrl(editingLine.body)}
+            alt=""
+            className="h-20 w-20 shrink-0 rounded border border-slate-700 object-cover"
+          />
+          <p className="pt-0.5 text-xs leading-snug text-slate-500">
+            You can change the caption below. To replace the image, delete this message and send a
+            new one.
+          </p>
         </div>
       )}
       {preview && (
@@ -191,7 +217,7 @@ export function MessageInput({
       <div
         className="flex gap-2"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
+        onDrop={isEditing ? (e) => e.preventDefault() : onDrop}
       >
         <input
           ref={fileRef}
@@ -242,11 +268,13 @@ export function MessageInput({
           ref={richRef}
           disabled={disabled}
           placeholder={
-            isEditing
-              ? "Edit message…"
-              : preview
-                ? "Add a caption (optional)…"
-                : "Type a message…"
+            editingMedia
+              ? "Edit caption…"
+              : isEditing
+                ? "Edit message…"
+                : preview
+                  ? "Add a caption (optional)…"
+                  : "Type a message…"
           }
           initialHtml={initialHtml}
           className="min-w-0 flex-1"

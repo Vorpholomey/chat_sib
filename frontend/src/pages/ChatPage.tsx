@@ -22,6 +22,7 @@ import {
   type BanDuration,
 } from "../lib/api";
 import { lineTextForSearch } from "../lib/messageSearch";
+import { isRichTextEmpty } from "../lib/richText";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
@@ -420,19 +421,36 @@ export function ChatPage() {
     const list =
       sc === "global" ? globalLines : privateLines[sc.peerId] ?? [];
     const prev = list.find((l) => String(l.id) === String(messageId));
-    const contentType = prev?.contentType ?? "text";
-    await putMessage(
-      messageId,
-      { text, content_type: contentType },
-      messageScope()
-    );
-    if (prev) {
+    if (!prev) return;
+    const scopeArg = messageScope();
+    if (prev.contentType === "text") {
+      await putMessage(
+        messageId,
+        { text, content_type: "text" },
+        scopeArg
+      );
       replaceLineById(messageId, sc, {
         ...prev,
         body: text,
         editedAt: new Date().toISOString(),
       });
+      return;
     }
+    const captionVal = isRichTextEmpty(text) ? null : text;
+    await putMessage(
+      messageId,
+      {
+        text: prev.body,
+        content_type: prev.contentType,
+        caption: captionVal,
+      },
+      scopeArg
+    );
+    replaceLineById(messageId, sc, {
+      ...prev,
+      caption: captionVal ?? undefined,
+      editedAt: new Date().toISOString(),
+    });
   };
 
   const activePinnedLine = pinnedGlobalMessages[pinnedPreviewIndex] ?? null;
@@ -670,7 +688,11 @@ export function ChatPage() {
             }
           />
           <MessageInput
-            key={editingLine ? `edit-${editingLine.id}` : `compose-${mode}-${peerId ?? "g"}`}
+            key={
+              editingLine
+                ? `edit-${editingLine.id}-${editingLine.contentType}`
+                : `compose-${mode}-${peerId ?? "g"}`
+            }
             disabled={!accessToken || (mode === "global" && globalBanned)}
             replyTo={replyTo}
             onClearReply={() => setReplyTo(null)}

@@ -98,7 +98,9 @@ function MessageLineRowInner({
 
   const allowOwnEdit =
     own &&
-    line.contentType === "text" &&
+    (line.contentType === "text" ||
+      line.contentType === "image" ||
+      line.contentType === "gif") &&
     (!isGlobal || !globalRoomBanned) &&
     onEditOwn;
   const allowOwnDelete =
