@@ -125,6 +125,7 @@ function MessageLineRowInner({
     searchActiveMessageId != null &&
     String(searchActiveMessageId) === String(line.id);
   const showSearchInline =
+    line.contentType === "text" &&
     Boolean(searchHighlightQuery?.trim()) &&
     lineMatchesSearchQuery(line.body, searchHighlightQuery!);
 
