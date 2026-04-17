@@ -48,6 +48,7 @@ def _ws_value_error_client_message(exc: ValueError) -> str:
             "reply does not",
             "invalid reaction",
             "Image URL",
+            "Caption",
         )
     ):
         return msg
@@ -234,6 +235,8 @@ async def websocket_global_chat(
                 msg_type = MessageType.text
             recipient_id: Optional[int] = data.get("recipient_id")
             reply_to_id: Optional[int] = data.get("reply_to_id")
+            caption_raw = data.get("caption")
+            caption: Optional[str] = caption_raw if isinstance(caption_raw, str) else None
 
             async with async_session_maker() as db:
                 try:
@@ -253,6 +256,7 @@ async def websocket_global_chat(
                                 text,
                                 msg_type,
                                 reply_to_id=reply_to_id,
+                                caption=caption,
                             )
                         except ValueError as ve:
                             await websocket.send_text(
@@ -277,6 +281,7 @@ async def websocket_global_chat(
                                 text,
                                 msg_type,
                                 reply_to_id=reply_to_id,
+                                caption=caption,
                             )
                         except ValueError as ve:
                             await websocket.send_text(

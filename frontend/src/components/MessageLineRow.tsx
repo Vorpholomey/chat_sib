@@ -1,7 +1,7 @@
 import { memo, useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import { Pin, Reply } from "lucide-react";
 import { assetUrl } from "../lib/config";
-import { textForMessageSearch } from "../lib/messageSearch";
+import { lineTextForSearch } from "../lib/messageSearch";
 import { usernameColorFromUser } from "../lib/usernameColor";
 import { formatTimeHm } from "../store/chatStore";
 import type { ChatLine } from "../types/chat";
@@ -12,10 +12,10 @@ import { MessageRichText } from "./MessageRichText";
 import { ReplyQuotePreview } from "./ReplyQuotePreview";
 import { RoleBadge } from "./RoleBadge";
 
-function lineMatchesSearchQuery(body: string, q: string): boolean {
+function lineMatchesSearchQuery(line: ChatLine, q: string): boolean {
   const t = q.trim();
   if (!t) return false;
-  return textForMessageSearch(body).toLowerCase().includes(t.toLowerCase());
+  return lineTextForSearch(line).toLowerCase().includes(t.toLowerCase());
 }
 
 function roleRank(r: UserRole | undefined): number {
@@ -98,7 +98,9 @@ function MessageLineRowInner({
 
   const allowOwnEdit =
     own &&
-    line.contentType === "text" &&
+    (line.contentType === "text" ||
+      line.contentType === "image" ||
+      line.contentType === "gif") &&
     (!isGlobal || !globalRoomBanned) &&
     onEditOwn;
   const allowOwnDelete =
@@ -125,9 +127,8 @@ function MessageLineRowInner({
     searchActiveMessageId != null &&
     String(searchActiveMessageId) === String(line.id);
   const showSearchInline =
-    line.contentType === "text" &&
     Boolean(searchHighlightQuery?.trim()) &&
-    lineMatchesSearchQuery(line.body, searchHighlightQuery!);
+    lineMatchesSearchQuery(line, searchHighlightQuery!);
 
   const imageSrc =
     line.contentType !== "text" ? assetUrl(line.body) : "";
@@ -263,20 +264,27 @@ function MessageLineRowInner({
                 }
               />
             ) : (
-              <span className="inline-block align-top">
-                <span className="text-slate-400">[image]</span>
+              <div className="inline-block max-w-full min-w-0 align-top">
                 {imageSrc ? (
                   <img
                     src={imageSrc}
                     alt=""
-                    className="mt-1 max-h-64 max-w-full rounded border border-slate-700 object-contain"
+                    className="block max-h-64 max-w-full rounded border border-slate-700 object-contain"
                   />
                 ) : (
-                  <span className="mt-1 block text-xs text-slate-500">
-                    Unavailable
-                  </span>
+                  <span className="block text-xs text-slate-500">Unavailable</span>
                 )}
-              </span>
+                {line.caption ? (
+                  <div className="mt-1.5 w-0 min-w-full">
+                    <MessageRichText
+                      body={line.caption}
+                      searchHighlight={
+                        showSearchInline ? searchHighlightQuery! : undefined
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
           <MessageReactionChips

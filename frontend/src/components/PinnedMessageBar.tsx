@@ -50,12 +50,17 @@ export function PinnedMessageBar({
           <MessageRichText body={line.body} />
         </div>
       ) : (
-        <div className="mt-1">
+        <div className="mt-1 flex min-w-0 max-w-full flex-row items-start gap-2">
           <img
             src={assetUrl(line.body)}
             alt=""
-            className="max-h-32 max-w-full rounded border border-slate-700 object-contain"
+            className="block h-auto max-h-16 shrink-0 rounded border border-slate-700 object-contain"
           />
+          {line.caption ? (
+            <div className="min-w-0 flex-1 line-clamp-3 text-slate-100">
+              <MessageRichText body={line.caption} />
+            </div>
+          ) : null}
         </div>
       )}
     </div>

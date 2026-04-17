@@ -50,11 +50,14 @@ export function globalPayloadToLine(
     data.reactions != null && typeof data.reactions === "object"
       ? normalizeReactions(data.reactions as Record<string, number[]>)
       : undefined;
+  const cap =
+    typeof data.caption === "string" && data.caption.trim() ? data.caption : undefined;
   return {
     id: data.id as number,
     at: (data.created_at as string) || new Date().toISOString(),
     author: (data.username as string) ?? "",
     body: (data.text as string) ?? "",
+    caption: cap,
     contentType: ct,
     senderId: uid,
     replyTo: parseReplyTo(data.reply_to),
@@ -73,6 +76,7 @@ export function privateApiToLine(
     recipient_id: number;
     content: string;
     message_type: ContentType;
+    caption?: string | null;
     created_at: string;
     edited_at?: string;
     reply_to?: unknown;
@@ -89,6 +93,7 @@ export function privateApiToLine(
       recipient_id: m.recipient_id,
       content: m.content,
       message_type: m.message_type,
+      caption: m.caption,
       created_at: m.created_at,
       edited_at: m.edited_at,
       reply_to: m.reply_to,
@@ -126,11 +131,14 @@ export function privatePayloadToLine(
     data.reactions != null && typeof data.reactions === "object"
       ? normalizeReactions(data.reactions as Record<string, number[]>)
       : undefined;
+  const cap =
+    typeof data.caption === "string" && data.caption.trim() ? data.caption : undefined;
   return {
     id: data.id as number,
     at: (data.created_at as string) || new Date().toISOString(),
     author,
     body: (data.content as string) ?? (data.text as string) ?? "",
+    caption: cap,
     contentType: ct,
     senderId: sid,
     recipientId: rid,

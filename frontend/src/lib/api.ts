@@ -62,11 +62,13 @@ export type CreateGlobalMessageBody = {
   text: string;
   content_type: ContentType;
   reply_to_id?: number | null;
+  caption?: string | null;
 };
 
 export type UpdateMessageBody = {
   text?: string;
   content_type?: ContentType;
+  caption?: string | null;
 };
 
 export async function postGlobalMessage(body: CreateGlobalMessageBody) {

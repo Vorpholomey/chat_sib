@@ -117,6 +117,7 @@ async def create_global_rest(
             body.text.strip(),
             body.content_type,
             reply_to_id=body.reply_to_id,
+            caption=body.caption,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -143,6 +144,8 @@ async def update_message(
                 current_user,
                 body.text.strip(),
                 body.content_type,
+                new_caption=body.caption,
+                apply_caption_change="caption" in body.model_fields_set,
             )
         except (LookupError, PermissionError) as e:
             raise _http_from_message_exc(e) from e
@@ -159,6 +162,8 @@ async def update_message(
             current_user,
             body.text.strip(),
             body.content_type,
+            new_caption=body.caption,
+            apply_caption_change="caption" in body.model_fields_set,
         )
     except (LookupError, PermissionError) as e:
         raise _http_from_message_exc(e) from e

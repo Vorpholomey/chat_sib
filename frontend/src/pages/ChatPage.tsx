@@ -21,7 +21,8 @@ import {
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
-import { textForMessageSearch } from "../lib/messageSearch";
+import { lineTextForSearch } from "../lib/messageSearch";
+import { isRichTextEmpty } from "../lib/richText";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
@@ -36,6 +37,7 @@ type PrivateMsgApi = {
   recipient_id: number;
   content: string;
   message_type: "text" | "image" | "gif";
+  caption?: string | null;
   is_read: boolean;
   created_at: string;
   edited_at?: string;
@@ -248,11 +250,7 @@ export function ChatPage() {
     }
     const lower = q.toLowerCase();
     const ids = lines
-      .filter(
-        (l) =>
-          l.contentType === "text" &&
-          textForMessageSearch(l.body).toLowerCase().includes(lower)
-      )
+      .filter((l) => lineTextForSearch(l).toLowerCase().includes(lower))
       .map((l) => l.id);
     setMsgSearchMatchIds(ids);
     setMsgSearchActiveIdx(0);
@@ -423,19 +421,36 @@ export function ChatPage() {
     const list =
       sc === "global" ? globalLines : privateLines[sc.peerId] ?? [];
     const prev = list.find((l) => String(l.id) === String(messageId));
-    const contentType = prev?.contentType ?? "text";
-    await putMessage(
-      messageId,
-      { text, content_type: contentType },
-      messageScope()
-    );
-    if (prev) {
+    if (!prev) return;
+    const scopeArg = messageScope();
+    if (prev.contentType === "text") {
+      await putMessage(
+        messageId,
+        { text, content_type: "text" },
+        scopeArg
+      );
       replaceLineById(messageId, sc, {
         ...prev,
         body: text,
         editedAt: new Date().toISOString(),
       });
+      return;
     }
+    const captionVal = isRichTextEmpty(text) ? null : text;
+    await putMessage(
+      messageId,
+      {
+        text: prev.body,
+        content_type: prev.contentType,
+        caption: captionVal,
+      },
+      scopeArg
+    );
+    replaceLineById(messageId, sc, {
+      ...prev,
+      caption: captionVal ?? undefined,
+      editedAt: new Date().toISOString(),
+    });
   };
 
   const activePinnedLine = pinnedGlobalMessages[pinnedPreviewIndex] ?? null;
@@ -673,16 +688,20 @@ export function ChatPage() {
             }
           />
           <MessageInput
-            key={editingLine ? `edit-${editingLine.id}` : `compose-${mode}-${peerId ?? "g"}`}
+            key={
+              editingLine
+                ? `edit-${editingLine.id}-${editingLine.contentType}`
+                : `compose-${mode}-${peerId ?? "g"}`
+            }
             disabled={!accessToken || (mode === "global" && globalBanned)}
             replyTo={replyTo}
             onClearReply={() => setReplyTo(null)}
             editingLine={editingLine}
             onCancelEdit={() => setEditingLine(null)}
             onSubmitEdit={handleSubmitEdit}
-            onSendText={(text, contentType, replyToId) => {
+            onSendText={(text, contentType, replyToId, caption) => {
               try {
-                sendActive(text, contentType, replyToId);
+                sendActive(text, contentType, replyToId, caption);
                 setReplyTo(null);
               } catch {
                 toast.error("Send failed");

@@ -312,7 +312,12 @@ export function useChatSocket() {
   }, [token, connect]);
 
   const sendGlobal = useCallback(
-    (text: string, contentType: ContentType, replyToId?: number | null) => {
+    (
+      text: string,
+      contentType: ContentType,
+      replyToId?: number | null,
+      caption?: string | null
+    ) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         toast.error("Not connected. Retrying…");
@@ -325,13 +330,22 @@ export function useChatSocket() {
       if (replyToId != null) {
         payload.reply_to_id = replyToId;
       }
+      if (caption != null && caption.trim() !== "") {
+        payload.caption = caption;
+      }
       ws.send(JSON.stringify(payload));
     },
     []
   );
 
   const sendPrivate = useCallback(
-    (recipientId: number, text: string, contentType: ContentType, replyToId?: number | null) => {
+    (
+      recipientId: number,
+      text: string,
+      contentType: ContentType,
+      replyToId?: number | null,
+      caption?: string | null
+    ) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         toast.error("Not connected. Retrying…");
@@ -345,19 +359,27 @@ export function useChatSocket() {
       if (replyToId != null) {
         payload.reply_to_id = replyToId;
       }
+      if (caption != null && caption.trim() !== "") {
+        payload.caption = caption;
+      }
       ws.send(JSON.stringify(payload));
     },
     []
   );
 
   const sendActive = useCallback(
-    (text: string, contentType: ContentType, replyToId?: number | null) => {
+    (
+      text: string,
+      contentType: ContentType,
+      replyToId?: number | null,
+      caption?: string | null
+    ) => {
       const mode = useChatStore.getState().mode;
       const p = useChatStore.getState().peerId;
       if (mode === "private" && p != null) {
-        sendPrivate(p, text, contentType, replyToId);
+        sendPrivate(p, text, contentType, replyToId, caption);
       } else {
-        sendGlobal(text, contentType, replyToId);
+        sendGlobal(text, contentType, replyToId, caption);
       }
     },
     [sendGlobal, sendPrivate]
