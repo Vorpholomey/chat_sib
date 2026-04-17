@@ -43,9 +43,9 @@ function normalizeTrailingWhitespaceInSanitizedHtml(html: string): string {
         if (next !== text.data) text.data = next;
         return;
       }
-      if (last.nodeType === Node.ELEMENT_NODE) {
-        stripFrom(last as ParentNode);
-        if ((last as Element).childNodes.length === 0) {
+      if (last instanceof Element) {
+        stripFrom(last);
+        if (last.childNodes.length === 0) {
           node.removeChild(last);
           continue;
         }
@@ -95,6 +95,61 @@ export function highlightSearchInSanitizedHtml(safeHtml: string, query: string):
 /** Heuristic: stored rich text uses HTML tags (not plain "hello <3"). */
 export function looksLikeRichHtml(s: string): boolean {
   return /<[a-z][\s\S]*>/i.test(s.trim());
+}
+
+export type PlainLinkifySegment =
+  | { kind: "text"; text: string }
+  | { kind: "link"; href: string; label: string };
+
+/** Parse `http(s)://` and `www.` tokens; trim trailing punctuation until URL() accepts. */
+export function tryHttpUrlFromPlainToken(raw: string): string | null {
+  const candidate = raw.startsWith("www.") ? `https://${raw}` : raw;
+  try {
+    const u = new URL(candidate);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Split plain message text into runs of plain text and safe http(s) links.
+ * Used when the body is not stored as rich HTML.
+ */
+export function splitPlainTextForLinkify(plain: string): PlainLinkifySegment[] {
+  if (!plain) {
+    return [{ kind: "text", text: "" }];
+  }
+  const re = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+/gi;
+  const matches = [...plain.matchAll(re)];
+  const out: PlainLinkifySegment[] = [];
+  let last = 0;
+  for (const m of matches) {
+    const mi = m.index ?? 0;
+    if (mi > last) {
+      out.push({ kind: "text", text: plain.slice(last, mi) });
+    }
+    const full = m[0];
+    let raw = full;
+    let href: string | null = null;
+    while (raw.length > 0) {
+      href = tryHttpUrlFromPlainToken(raw);
+      if (href) break;
+      raw = raw.slice(0, -1);
+    }
+    if (href && raw.length > 0) {
+      out.push({ kind: "link", href, label: raw });
+      last = mi + raw.length;
+    } else {
+      out.push({ kind: "text", text: full });
+      last = mi + full.length;
+    }
+  }
+  if (last < plain.length) {
+    out.push({ kind: "text", text: plain.slice(last) });
+  }
+  return out;
 }
 
 export function plainTextToEditableHtml(plain: string): string {
