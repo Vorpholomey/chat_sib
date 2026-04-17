@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Heart } from "lucide-react";
 import { positionPanelAboveAnchorInBounds } from "../lib/floatingMenuPosition";
 import {
   hasAnyReactions,
@@ -15,9 +16,6 @@ const META: Record<ReactionKind, { emoji: string; label: string }> = {
   fire: { emoji: "\u{1F525}", label: "Fire" },
   joy: { emoji: "\u{1F602}", label: "Laughing to tears" },
 };
-
-/** Picker trigger: heart emoji only opens the menu — it does not add a reaction. */
-const PICKER_TRIGGER_EMOJI = "\u{2764}\u{FE0F}";
 
 export type MessageReactionChipsProps = {
   reactions: MessageReactionState;
@@ -103,7 +101,6 @@ export function MessageReactionChips({
 export type ReactionPickerControlProps = {
   reactions: MessageReactionState;
   currentUserId?: number;
-  own: boolean;
   onToggle: (kind: ReactionKind) => void;
   /** Where to align the popover relative to the heart button (`left` = own-message column). */
   panelAlign: "left" | "right";
@@ -114,7 +111,6 @@ export type ReactionPickerControlProps = {
 export function ReactionPickerControl({
   reactions,
   currentUserId,
-  own,
   onToggle,
   panelAlign,
   boundsRef,
@@ -196,16 +192,13 @@ export function ReactionPickerControl({
         disabled={!canInteract}
         onClick={() => canInteract && setPickerOpen((o) => !o)}
         className={[
-          "flex h-8 w-8 items-center justify-center rounded-full border text-base leading-none transition-transform duration-150",
-          "enabled:cursor-pointer enabled:hover:scale-110 enabled:active:scale-95",
+          "flex h-[33px] w-[33px] shrink-0 items-center justify-center rounded-lg border border-slate-700 text-slate-400 shadow-sm transition-transform duration-150",
+          "enabled:cursor-pointer enabled:hover:bg-slate-800 enabled:hover:text-slate-200 enabled:active:scale-95 enabled:active:bg-slate-800",
           "disabled:cursor-not-allowed disabled:opacity-50",
-          own
-            ? "border-violet-800/40 bg-slate-950/40 text-violet-200/90 hover:border-violet-600/50"
-            : "border-slate-600/70 bg-slate-950/40 text-rose-200/90 hover:border-slate-500",
-          pickerOpen ? "ring-2 ring-violet-500/40" : "",
+          pickerOpen ? "ring-2 ring-slate-600/50" : "",
         ].join(" ")}
       >
-        <span aria-hidden>{PICKER_TRIGGER_EMOJI}</span>
+        <Heart className="h-4 w-4 shrink-0" aria-hidden strokeWidth={2} />
       </button>
 
       {pickerOpen && canInteract && (

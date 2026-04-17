@@ -1,7 +1,7 @@
 import { memo, useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import { Pin, Reply } from "lucide-react";
 import { assetUrl } from "../lib/config";
-import { lineTextForSearch } from "../lib/messageSearch";
+import { textForMessageSearch } from "../lib/messageSearch";
 import { usernameColorFromUser } from "../lib/usernameColor";
 import { formatTimeHm } from "../store/chatStore";
 import type { ChatLine } from "../types/chat";
@@ -12,10 +12,10 @@ import { MessageRichText } from "./MessageRichText";
 import { ReplyQuotePreview } from "./ReplyQuotePreview";
 import { RoleBadge } from "./RoleBadge";
 
-function lineMatchesSearchQuery(line: ChatLine, q: string): boolean {
+function lineMatchesSearchQuery(body: string, q: string): boolean {
   const t = q.trim();
   if (!t) return false;
-  return lineTextForSearch(line).toLowerCase().includes(t.toLowerCase());
+  return textForMessageSearch(body).toLowerCase().includes(t.toLowerCase());
 }
 
 function roleRank(r: UserRole | undefined): number {
@@ -98,9 +98,7 @@ function MessageLineRowInner({
 
   const allowOwnEdit =
     own &&
-    (line.contentType === "text" ||
-      line.contentType === "image" ||
-      line.contentType === "gif") &&
+    line.contentType === "text" &&
     (!isGlobal || !globalRoomBanned) &&
     onEditOwn;
   const allowOwnDelete =
@@ -127,8 +125,14 @@ function MessageLineRowInner({
     searchActiveMessageId != null &&
     String(searchActiveMessageId) === String(line.id);
   const showSearchInline =
+    line.contentType === "text" &&
     Boolean(searchHighlightQuery?.trim()) &&
-    lineMatchesSearchQuery(line, searchHighlightQuery!);
+    lineMatchesSearchQuery(line.body, searchHighlightQuery!);
+  const showCaptionSearchInline =
+    line.contentType !== "text" &&
+    Boolean(searchHighlightQuery?.trim()) &&
+    Boolean(line.caption?.trim()) &&
+    lineMatchesSearchQuery(line.caption!, searchHighlightQuery!);
 
   const imageSrc =
     line.contentType !== "text" ? assetUrl(line.body) : "";
@@ -140,29 +144,32 @@ function MessageLineRowInner({
       onContextMenu={hasMenu ? (e) => onContextMenu(line, e) : undefined}
     >
       <div
-        className={`flex w-full min-w-0 items-center gap-2 ${
+        className={`flex w-full min-w-0 items-stretch gap-2 ${
           own ? "justify-end" : "justify-start"
         }`}
       >
-        {onReply && own && (
+        {own && (
           <div
-            className="relative order-first flex shrink-0 flex-col items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
+            className={`relative order-first flex min-h-0 shrink-0 flex-col items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
+              onReply ? "justify-between" : "justify-end"
+            }`}
           >
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
-              aria-label="Reply"
-              onClick={(e) => {
-                e.stopPropagation();
-                onReply(line);
-              }}
-            >
-              <Reply className="h-4 w-4" />
-            </button>
+            {onReply && (
+              <button
+                type="button"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
+                aria-label="Reply"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onReply(line);
+                }}
+              >
+                <Reply className="h-4 w-4" />
+              </button>
+            )}
             <ReactionPickerControl
               reactions={reactions}
               currentUserId={currentUserId}
-              own={own}
               panelAlign="left"
               boundsRef={threadRef}
               onToggle={(kind) => onReactionToggle?.(line.id, kind)}
@@ -264,22 +271,28 @@ function MessageLineRowInner({
                 }
               />
             ) : (
-              <div className="inline-block max-w-full min-w-0 align-top">
+              <div className="inline-block max-w-full align-top">
+                <span className="text-slate-400">[image]</span>
                 {imageSrc ? (
                   <img
                     src={imageSrc}
                     alt=""
-                    className="block max-h-64 max-w-full rounded border border-slate-700 object-contain"
+                    className="mt-1 block max-h-64 w-auto max-w-full rounded border border-slate-700 object-contain"
                   />
                 ) : (
-                  <span className="block text-xs text-slate-500">Unavailable</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Unavailable
+                  </span>
                 )}
-                {line.caption ? (
-                  <div className="mt-1.5 w-0 min-w-full">
+                {line.caption?.trim() ? (
+                  /* w-0 min-w-full: shrink-wrap width follows the image; caption fills that width without widening the box */
+                  <div className="mt-2 w-0 min-w-full max-w-full text-left">
                     <MessageRichText
                       body={line.caption}
                       searchHighlight={
-                        showSearchInline ? searchHighlightQuery! : undefined
+                        showCaptionSearchInline
+                          ? searchHighlightQuery!
+                          : undefined
                       }
                     />
                   </div>
@@ -293,18 +306,6 @@ function MessageLineRowInner({
             own={own}
             onToggle={(kind) => onReactionToggle?.(line.id, kind)}
           />
-          {!onReply && (
-            <div className="mt-1.5 flex justify-end">
-              <ReactionPickerControl
-                reactions={reactions}
-                currentUserId={currentUserId}
-                own={own}
-                panelAlign="right"
-                boundsRef={threadRef}
-                onToggle={(kind) => onReactionToggle?.(line.id, kind)}
-              />
-            </div>
-          )}
           <div className="mt-0.5 flex items-center justify-end gap-2 text-right text-xs text-slate-500">
             {isPinnedRow && onJumpToMessage && (
               <button
@@ -326,23 +327,28 @@ function MessageLineRowInner({
             )}
           </div>
         </div>
-        {onReply && !own && (
-          <div className="relative flex shrink-0 flex-col items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
-              aria-label="Reply"
-              onClick={(e) => {
-                e.stopPropagation();
-                onReply(line);
-              }}
-            >
-              <Reply className="h-4 w-4" />
-            </button>
+        {!own && (
+          <div
+            className={`relative flex min-h-0 shrink-0 flex-col items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
+              onReply ? "justify-between" : "justify-end"
+            }`}
+          >
+            {onReply && (
+              <button
+                type="button"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
+                aria-label="Reply"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onReply(line);
+                }}
+              >
+                <Reply className="h-4 w-4" />
+              </button>
+            )}
             <ReactionPickerControl
               reactions={reactions}
               currentUserId={currentUserId}
-              own={own}
               panelAlign="right"
               boundsRef={threadRef}
               onToggle={(kind) => onReactionToggle?.(line.id, kind)}
