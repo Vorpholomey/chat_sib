@@ -162,6 +162,57 @@ export async function fetchGlobalMessageContext(
   }
 }
 
+/** Full-history search: message ids in chronological order (text + image captions; not image URLs). */
+export async function searchGlobalMessages(q: string): Promise<number[]> {
+  const trimmed = q.trim();
+  if (!trimmed) return [];
+  try {
+    const { data } = await api.get<{ ids: number[] }>("/api/messages/global/search", {
+      params: { q: trimmed },
+    });
+    return data.ids;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+export async function searchPrivateMessages(peerId: number, q: string): Promise<number[]> {
+  const trimmed = q.trim();
+  if (!trimmed) return [];
+  try {
+    const { data } = await api.get<{ ids: number[] }>(
+      `/api/private/messages/${peerId}/search`,
+      { params: { q: trimmed } }
+    );
+    return data.ids;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
+/** Private thread window around an id (same shape as WebSocket / list endpoints). */
+export async function fetchPrivateMessageContext(
+  peerId: number,
+  messageId: number | string,
+  opts?: { before?: number; after?: number }
+) {
+  try {
+    const { data } = await api.get<unknown[]>(`/api/private/messages/${peerId}/context`, {
+      params: {
+        message_id: messageId,
+        before: opts?.before ?? 50,
+        after: opts?.after ?? 50,
+      },
+    });
+    return data;
+  } catch (e) {
+    toast.error(errMessage(e));
+    throw e;
+  }
+}
+
 export type BanDuration = "1h" | "24h" | "forever";
 
 export async function banUser(userId: number, duration: BanDuration) {

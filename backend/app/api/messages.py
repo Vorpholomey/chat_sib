@@ -29,6 +29,7 @@ from app.services.message import (
     pin_global_message,
     private_message_to_response,
     private_message_to_rest_dict,
+    search_global_message_ids,
     unpin_global_message,
     update_global_message,
     update_private_message,
@@ -89,6 +90,22 @@ async def get_global_message_context(
         global_message_to_response(m, reactions=rmap.get(m.id))
         for m in msgs
     ]
+
+
+@router.get("/global/search")
+async def search_global_messages_route(
+    q: Annotated[str, Query(..., min_length=1, max_length=200, description="Substring to match")],
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, list[int]]:
+    """Full global history search (ids only); same text/caption rules as the client."""
+    if not permissions.can_access_global_feed(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No access to global chat",
+        )
+    ids = await search_global_message_ids(db, q.strip())
+    return {"ids": ids}
 
 
 def _http_from_message_exc(exc: Exception) -> HTTPException:

@@ -10,13 +10,14 @@ export function textForMessageSearch(body: string): string {
   return body;
 }
 
-/** Body plus optional image caption for in-chat search. */
+/** Searchable text for in-chat search: message body for text; caption only for image/gif (body is storage path, not user text). */
 export function lineTextForSearch(line: ChatLine): string {
-  const base = textForMessageSearch(line.body);
-  const cap = line.caption?.trim()
-    ? textForMessageSearch(line.caption)
-    : "";
-  return cap ? `${base} ${cap}`.trim() : base;
+  if (line.contentType === "image" || line.contentType === "gif") {
+    return line.caption?.trim()
+      ? textForMessageSearch(line.caption)
+      : "";
+  }
+  return textForMessageSearch(line.body);
 }
 
 export function escapeRegExp(s: string): string {

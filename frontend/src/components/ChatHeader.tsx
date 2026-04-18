@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { LogOut, MessageSquare, Search, Users, X } from "lucide-react";
+import { Loader2, LogOut, MessageSquare, Search, Users, X } from "lucide-react";
 import type { UserRole } from "../types/user";
 import { RoleBadge } from "./RoleBadge";
 
@@ -15,6 +15,8 @@ export type ChatMessageSearchControls = {
   onClose: () => void;
   onSubmit: () => void;
   hasRun: boolean;
+  /** True while fetching full-history matches or loading context for navigation */
+  loading?: boolean;
   matchCount: number;
   activeIndex: number;
   onPrev: () => void;
@@ -138,15 +140,22 @@ export function ChatHeader({
                 autoComplete="off"
                 placeholder="Search messages..."
                 value={ms.draft}
+                disabled={ms.loading === true}
+                aria-busy={ms.loading === true}
                 onChange={(e) => ms.onDraftChange(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-base text-slate-100 shadow-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-base text-slate-100 shadow-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:opacity-60"
               />
               <button
                 type="submit"
-                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-violet-300 shadow-sm hover:bg-slate-800"
+                disabled={ms.loading === true}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-violet-300 shadow-sm hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
                 title="Search"
               >
-                <Search className="h-4 w-4 shrink-0" aria-hidden />
+                {ms.loading === true ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                ) : (
+                  <Search className="h-4 w-4 shrink-0" aria-hidden />
+                )}
                 <span className="hidden sm:inline">Search</span>
               </button>
               <button
@@ -176,7 +185,8 @@ export function ChatHeader({
                   <div className="flex items-center gap-0.5">
                     <button
                       type="button"
-                      className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+                      disabled={ms.loading === true}
+                      className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
                       aria-label="Previous match"
                       onClick={ms.onPrev}
                     >
@@ -184,7 +194,8 @@ export function ChatHeader({
                     </button>
                     <button
                       type="button"
-                      className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+                      disabled={ms.loading === true}
+                      className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
                       aria-label="Next match"
                       onClick={ms.onNext}
                     >

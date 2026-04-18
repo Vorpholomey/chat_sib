@@ -15,7 +15,9 @@ export function ReplyQuotePreview({ contentType, text }: Props) {
     const src = assetUrl(text);
     if (!src) {
       return (
-        <span className="line-clamp-2 block text-slate-500">[image]</span>
+        <span className="line-clamp-2 block text-xs text-slate-500">
+          Unavailable
+        </span>
       );
     }
     return (

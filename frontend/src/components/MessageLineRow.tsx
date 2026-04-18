@@ -272,12 +272,11 @@ function MessageLineRowInner({
               />
             ) : (
               <div className="inline-block max-w-full align-top">
-                <span className="text-slate-400">[image]</span>
                 {imageSrc ? (
                   <img
                     src={imageSrc}
                     alt=""
-                    className="mt-1 block max-h-64 w-auto max-w-full rounded border border-slate-700 object-contain"
+                    className="block max-h-64 w-auto max-w-full rounded border border-slate-700 object-contain"
                   />
                 ) : (
                   <span className="mt-1 block text-xs text-slate-500">
