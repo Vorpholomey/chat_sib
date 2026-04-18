@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
-import { ACCOUNT_PERMANENTLY_BANNED } from "./authErrors";
+import { ACCOUNT_PERMANENTLY_BANNED, PASSWORD_CHANGE_REQUIRED } from "./authErrors";
 import { API_BASE } from "./config";
 import { useAuthStore } from "../store/authStore";
 import type { ContentType } from "../types/chat";
@@ -40,6 +40,13 @@ api.interceptors.response.use(
       useAuthStore.getState().logout();
       toast.error(detail);
       window.location.href = "/login";
+      return Promise.reject(err);
+    }
+    if (status === 403 && detail === PASSWORD_CHANGE_REQUIRED) {
+      if (window.location.pathname !== "/change-password") {
+        toast.error("You must set a new password to continue.");
+        window.location.assign("/change-password");
+      }
       return Promise.reject(err);
     }
     if (status === 401) {

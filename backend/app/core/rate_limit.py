@@ -27,3 +27,4 @@ class SlidingWindowLimiter:
 # Stricter on login (credential stuffing); looser on register (still bounded).
 login_limiter = SlidingWindowLimiter(max_requests=20, window_seconds=60.0)
 register_limiter = SlidingWindowLimiter(max_requests=8, window_seconds=60.0)
+forgot_password_limiter = SlidingWindowLimiter(max_requests=20, window_seconds=60.0)

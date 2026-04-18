@@ -5,7 +5,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_full_chat_access
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserResponse
@@ -41,7 +41,7 @@ async def get_profile(current_user: User = Depends(get_current_user)):
 
 @router.get("/conversations", response_model=ConversationList)
 async def list_conversations(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """List dialogues for current user with last message and time."""
@@ -52,7 +52,7 @@ async def list_conversations(
 @router.post("/messages", response_model=PrivateMessageResponse)
 async def create_private_message_rest(
     body: PrivateMessageCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a private message (same rules as WebSocket; public-ban does not block DMs)."""
@@ -89,7 +89,7 @@ async def create_private_message_rest(
 async def search_messages_with_user(
     user_id: int,
     q: Annotated[str, Query(..., min_length=1, max_length=200, description="Substring to match")],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Full thread search (message ids only)."""
@@ -108,7 +108,7 @@ async def get_private_message_context(
     message_id: Annotated[int, Query(..., ge=1, description="Anchor message id")],
     before: Annotated[int, Query(ge=0, le=500)] = 50,
     after: Annotated[int, Query(ge=0, le=500)] = 50,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Load a window of private messages around `message_id` (jump-to / search navigation)."""
@@ -138,7 +138,7 @@ async def get_messages_with_user(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = CHAT_PAGE_SIZE,
     before_id: Annotated[Optional[int], Query(ge=1, description="Load only messages older than this id")] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Message history with a specific user: chronological order, newest page by default or older via `before_id`."""

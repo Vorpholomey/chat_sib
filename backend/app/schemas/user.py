@@ -36,6 +36,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     public_ban_until: Optional[datetime] = None
     public_ban_permanent: bool = False
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 

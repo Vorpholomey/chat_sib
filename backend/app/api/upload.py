@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 
-from app.api.deps import get_current_user
+from app.api.deps import require_full_chat_access
 from app.core.config import settings
 from app.models.user import User
 from app.schemas.upload import UploadResponse
@@ -45,7 +45,7 @@ def _ensure_upload_dir() -> Path:
 @router.post("/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
 ):
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename")

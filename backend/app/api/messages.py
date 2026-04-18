@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_moderator_or_admin
+from app.api.deps import require_full_chat_access, require_moderator_or_admin
 from app.db.session import async_session_maker, get_db
 from app.models.user import User
 from app.models.global_message import MessageType
@@ -50,7 +50,7 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 async def get_global_history_older(
     before_id: Annotated[int, Query(..., ge=1, description="Load global messages older than this id")],
     limit: int = Query(CHAT_PAGE_SIZE, ge=1, le=100, description="Max messages to return"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Paginated global history: messages strictly before `before_id`, chronological order."""
@@ -72,7 +72,7 @@ async def get_global_message_context(
     message_id: Annotated[int, Query(..., ge=1, description="Anchor global message id")],
     before: int = Query(50, ge=0, le=500, description="Rows before anchor (by id)"),
     after: int = Query(50, ge=0, le=500, description="Rows after anchor (by id)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Load a window of global messages around `message_id` (for jump-to / lazy history)."""
@@ -95,7 +95,7 @@ async def get_global_message_context(
 @router.get("/global/search")
 async def search_global_messages_route(
     q: Annotated[str, Query(..., min_length=1, max_length=200, description="Substring to match")],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, list[int]]:
     """Full global history search (ids only); same text/caption rules as the client."""
@@ -122,7 +122,7 @@ def _http_from_message_exc(exc: Exception) -> HTTPException:
 @router.post("", response_model=GlobalMessageResponse)
 async def create_global_rest(
     body: GlobalMessageCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     if not permissions.can_send_global(current_user):
@@ -150,7 +150,7 @@ async def update_message(
     message_id: int,
     scope: Annotated[Literal["global", "private"], Query(..., description="global or private")],
     body: GlobalMessageUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     if scope == "global":
@@ -199,7 +199,7 @@ async def update_message(
 async def delete_message(
     message_id: int,
     scope: Annotated[Literal["global", "private"], Query(...)],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     if scope == "global":

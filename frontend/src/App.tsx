@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { ChatPage } from "./pages/ChatPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
@@ -14,6 +15,14 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route
+              path="/change-password"
+              element={
+                <ProtectedRoute mode="changePassword">
+                  <ChangePasswordPage />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/"
               element={
