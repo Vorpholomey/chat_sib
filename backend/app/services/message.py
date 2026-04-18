@@ -30,6 +30,8 @@ from app.schemas.message import (
 GLOBAL_CHAT_LIMIT = 1000
 # Page size for initial WS history and REST pagination (global + private).
 CHAT_PAGE_SIZE = 20
+# Max matching message ids returned by full-history search (UI prev/next).
+MESSAGE_SEARCH_MAX_IDS = 2000
 
 _AUDIT_GLOBAL_EDIT = "global_message_edit"
 _AUDIT_GLOBAL_DELETE = "global_message_delete"
@@ -137,6 +139,38 @@ async def get_global_messages_near(
         newer = list(r_new.scalars().all())
 
     return older + [center] + newer
+
+
+def _escape_like_wildcards(raw: str) -> str:
+    """Escape \\, %, _ for PostgreSQL ILIKE with escape='\\\\'."""
+    return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def search_global_message_ids(
+    db: AsyncSession, q: str, *, limit: int = MESSAGE_SEARCH_MAX_IDS
+) -> list[int]:
+    """
+    Message ids matching the query (chronological order).
+    Text: substring match on stored body (HTML). Image/gif: caption only (not file URL).
+    """
+    raw = (q or "").strip()
+    if not raw:
+        return []
+    pattern = f"%{_escape_like_wildcards(raw)}%"
+    mt_text = MessageType.text
+    mt_media = (MessageType.image, MessageType.gif)
+    cond = or_(
+        and_(GlobalMessage.message_type == mt_text, GlobalMessage.content.ilike(pattern, escape="\\")),
+        and_(
+            GlobalMessage.message_type.in_(mt_media),
+            GlobalMessage.caption.isnot(None),
+            GlobalMessage.caption.ilike(pattern, escape="\\"),
+        ),
+    )
+    result = await db.execute(
+        select(GlobalMessage.id).where(cond).order_by(asc(GlobalMessage.id)).limit(limit)
+    )
+    return [row[0] for row in result.all()]
 
 
 async def get_private_message_by_id(db: AsyncSession, message_id: int) -> Optional[PrivateMessage]:
@@ -708,3 +742,96 @@ async def get_private_messages_before_id(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+_PRIVATE_MSG_LOAD = (
+    selectinload(PrivateMessage.sender),
+    selectinload(PrivateMessage.recipient),
+    selectinload(PrivateMessage.reply_to).selectinload(PrivateMessage.sender),
+)
+
+
+def _private_pair_filter(current_user_id: int, other_user_id: int):
+    return or_(
+        and_(PrivateMessage.sender_id == current_user_id, PrivateMessage.recipient_id == other_user_id),
+        and_(PrivateMessage.sender_id == other_user_id, PrivateMessage.recipient_id == current_user_id),
+    )
+
+
+async def get_private_messages_near(
+    db: AsyncSession,
+    current_user_id: int,
+    other_user_id: int,
+    message_id: int,
+    *,
+    before: int = 50,
+    after: int = 50,
+) -> list[PrivateMessage]:
+    """Private messages around `message_id` (by id), inclusive of center; same rules as global context."""
+    center = await get_private_message_by_id(db, message_id)
+    if center is None:
+        return []
+    pair_ok = (
+        (center.sender_id == current_user_id and center.recipient_id == other_user_id)
+        or (center.sender_id == other_user_id and center.recipient_id == current_user_id)
+    )
+    if not pair_ok:
+        return []
+
+    pair = _private_pair_filter(current_user_id, other_user_id)
+    older: list[PrivateMessage] = []
+    if before > 0:
+        r_old = await db.execute(
+            select(PrivateMessage)
+            .where(and_(pair, PrivateMessage.id < message_id))
+            .options(*_PRIVATE_MSG_LOAD)
+            .order_by(desc(PrivateMessage.id))
+            .limit(before)
+        )
+        older = list(reversed(r_old.scalars().all()))
+
+    newer: list[PrivateMessage] = []
+    if after > 0:
+        r_new = await db.execute(
+            select(PrivateMessage)
+            .where(and_(pair, PrivateMessage.id > message_id))
+            .options(*_PRIVATE_MSG_LOAD)
+            .order_by(asc(PrivateMessage.id))
+            .limit(after)
+        )
+        newer = list(r_new.scalars().all())
+
+    return older + [center] + newer
+
+
+async def search_private_message_ids(
+    db: AsyncSession,
+    current_user_id: int,
+    other_user_id: int,
+    q: str,
+    *,
+    limit: int = MESSAGE_SEARCH_MAX_IDS,
+) -> list[int]:
+    """Private thread message ids matching the query (chronological order)."""
+    raw = (q or "").strip()
+    if not raw:
+        return []
+    pattern = f"%{_escape_like_wildcards(raw)}%"
+    pair = _private_pair_filter(current_user_id, other_user_id)
+    mt_text = MessageType.text
+    cond = or_(
+        and_(PrivateMessage.message_type == mt_text, PrivateMessage.content.ilike(pattern, escape="\\")),
+        and_(
+            PrivateMessage.message_type.in_((MessageType.image, MessageType.gif)),
+            PrivateMessage.caption.isnot(None),
+            PrivateMessage.caption.ilike(pattern, escape="\\"),
+        ),
+    )
+    result = await db.execute(
+        select(PrivateMessage.id)
+        .where(pair)
+        .where(cond)
+        .order_by(asc(PrivateMessage.id))
+        .limit(limit)
+    )
+    return [row[0] for row in result.all()]

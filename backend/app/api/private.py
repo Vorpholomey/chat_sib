@@ -21,9 +21,11 @@ from app.services.message import (
     get_conversations,
     get_private_messages,
     get_private_messages_before_id,
+    get_private_messages_near,
     notify_private_event,
     private_message_to_response,
     private_message_to_rest_dict,
+    search_private_message_ids,
 )
 from app.services.reactions import empty_reactions_dict, reactions_map_private
 from app.services.user import get_user_by_id
@@ -81,6 +83,53 @@ async def create_private_message_rest(
     return PrivateMessageResponse.model_validate(
         private_message_to_rest_dict(msg, reactions=empty_reactions_dict())
     )
+
+
+@router.get("/messages/{user_id}/search", response_model=dict[str, list[int]])
+async def search_messages_with_user(
+    user_id: int,
+    q: Annotated[str, Query(..., min_length=1, max_length=200, description="Substring to match")],
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full thread search (message ids only)."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot search messages with yourself")
+    other = await get_user_by_id(db, user_id)
+    if not other:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ids = await search_private_message_ids(db, current_user.id, user_id, q.strip())
+    return {"ids": ids}
+
+
+@router.get("/messages/{user_id}/context", response_model=list[PrivateMessageResponse])
+async def get_private_message_context(
+    user_id: int,
+    message_id: Annotated[int, Query(..., ge=1, description="Anchor message id")],
+    before: Annotated[int, Query(ge=0, le=500)] = 50,
+    after: Annotated[int, Query(ge=0, le=500)] = 50,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Load a window of private messages around `message_id` (jump-to / search navigation)."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot load context with yourself")
+    other = await get_user_by_id(db, user_id)
+    if not other:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    msgs = await get_private_messages_near(
+        db, current_user.id, user_id, message_id, before=before, after=after
+    )
+    if not msgs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    ids = [m.id for m in msgs]
+    rmap = await reactions_map_private(db, ids)
+    return [
+        PrivateMessageResponse.model_validate(
+            private_message_to_rest_dict(m, reactions=rmap.get(m.id))
+        )
+        for m in msgs
+    ]
 
 
 @router.get("/messages/{user_id}", response_model=list[PrivateMessageResponse])

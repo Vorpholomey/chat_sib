@@ -15,13 +15,15 @@ import {
   deleteMessage,
   fetchGlobalHistoryBefore,
   fetchGlobalMessageContext,
+  fetchPrivateMessageContext,
   pinGlobalMessage,
   putMessage,
   setUserRole,
+  searchGlobalMessages,
+  searchPrivateMessages,
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
-import { lineTextForSearch } from "../lib/messageSearch";
 import { isRichTextEmpty } from "../lib/richText";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
@@ -101,6 +103,7 @@ export function ChatPage() {
   const [msgSearchMatchIds, setMsgSearchMatchIds] = useState<(string | number)[]>([]);
   const [msgSearchActiveIdx, setMsgSearchActiveIdx] = useState(0);
   const [msgSearchScrollToId, setMsgSearchScrollToId] = useState<string | number | null>(null);
+  const [msgSearchLoading, setMsgSearchLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [globalHasMoreOlder, setGlobalHasMoreOlder] = useState(true);
   const [privateHasMoreOlder, setPrivateHasMoreOlder] = useState(false);
@@ -238,7 +241,44 @@ export function ChatPage() {
         ? privateLines[peerId] ?? []
         : globalLines;
 
-  const runMessageSearch = useCallback(() => {
+  /** Load a window around `messageId` so search jump / prev-next can scroll to it. */
+  const ensureMessageInThreadForSearch = useCallback(
+    async (messageId: string | number) => {
+      const sid = String(messageId);
+      if (mode === "private") {
+        if (peerId == null || !user) return;
+        const list = privateLines[peerId] ?? [];
+        if (list.some((l) => String(l.id) === sid)) return;
+        const data = await fetchPrivateMessageContext(peerId, messageId);
+        const peerLabel = peerName ?? "…";
+        const mapped: ChatLine[] = data.map((m) =>
+          privateApiToLine(m as PrivateMsgApi, user.id, peerLabel)
+        );
+        mergePrivateLines(peerId, mapped);
+        return;
+      }
+      if (permanentGlobalBan) return;
+      if (globalLines.some((l) => String(l.id) === sid)) return;
+      const data = await fetchGlobalMessageContext(messageId);
+      const mapped: ChatLine[] = data.map((raw) =>
+        globalPayloadToLine(raw as Record<string, unknown>, user?.id)
+      );
+      mergeGlobalLines(mapped);
+    },
+    [
+      mode,
+      peerId,
+      user,
+      peerName,
+      privateLines,
+      globalLines,
+      permanentGlobalBan,
+      mergePrivateLines,
+      mergeGlobalLines,
+    ]
+  );
+
+  const runMessageSearch = useCallback(async () => {
     setMsgSearchHasRun(true);
     const q = msgSearchDraft.trim();
     setMsgSearchQuery(q);
@@ -246,17 +286,49 @@ export function ChatPage() {
       setMsgSearchMatchIds([]);
       setMsgSearchActiveIdx(0);
       setMsgSearchScrollToId(null);
+      setMsgSearchLoading(false);
       return;
     }
-    const lower = q.toLowerCase();
-    const ids = lines
-      .filter((l) => lineTextForSearch(l).toLowerCase().includes(lower))
-      .map((l) => l.id);
-    setMsgSearchMatchIds(ids);
-    setMsgSearchActiveIdx(0);
-    if (ids.length > 0) setMsgSearchScrollToId(ids[0]!);
-    else setMsgSearchScrollToId(null);
-  }, [msgSearchDraft, lines]);
+    if (mode === "global" && permanentGlobalBan) {
+      setMsgSearchMatchIds([]);
+      setMsgSearchActiveIdx(0);
+      setMsgSearchScrollToId(null);
+      return;
+    }
+    if (mode === "private" && peerId == null) {
+      setMsgSearchMatchIds([]);
+      setMsgSearchActiveIdx(0);
+      setMsgSearchScrollToId(null);
+      return;
+    }
+    setMsgSearchLoading(true);
+    try {
+      const ids =
+        mode === "private" && peerId != null
+          ? await searchPrivateMessages(peerId, q)
+          : await searchGlobalMessages(q);
+      setMsgSearchMatchIds(ids);
+      setMsgSearchActiveIdx(0);
+      if (ids.length > 0 && ids[0] != null) {
+        await ensureMessageInThreadForSearch(ids[0]);
+        setMsgSearchScrollToId(ids[0]);
+      } else {
+        setMsgSearchScrollToId(null);
+      }
+    } catch {
+      setMsgSearchMatchIds([]);
+      setMsgSearchActiveIdx(0);
+      setMsgSearchScrollToId(null);
+    } finally {
+      setMsgSearchLoading(false);
+    }
+  }, [
+    msgSearchDraft,
+    mode,
+    peerId,
+    permanentGlobalBan,
+    ensureMessageInThreadForSearch,
+  ]);
 
   const closeMessageSearch = useCallback(() => {
     setMsgSearchOpen(false);
@@ -266,6 +338,7 @@ export function ChatPage() {
     setMsgSearchMatchIds([]);
     setMsgSearchActiveIdx(0);
     setMsgSearchScrollToId(null);
+    setMsgSearchLoading(false);
   }, []);
 
   useEffect(() => {
@@ -280,21 +353,49 @@ export function ChatPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [msgSearchOpen, closeMessageSearch]);
 
-  const msgSearchGoNext = useCallback(() => {
-    if (msgSearchMatchIds.length === 0) return;
+  const msgSearchGoNext = useCallback(async () => {
+    if (msgSearchMatchIds.length === 0 || msgSearchLoading) return;
     const next = (msgSearchActiveIdx + 1) % msgSearchMatchIds.length;
-    setMsgSearchActiveIdx(next);
-    setMsgSearchScrollToId(msgSearchMatchIds[next]!);
-  }, [msgSearchMatchIds, msgSearchActiveIdx]);
+    const id = msgSearchMatchIds[next]!;
+    setMsgSearchLoading(true);
+    try {
+      await ensureMessageInThreadForSearch(id);
+      setMsgSearchActiveIdx(next);
+      setMsgSearchScrollToId(id);
+    } catch {
+      /* toast from api */
+    } finally {
+      setMsgSearchLoading(false);
+    }
+  }, [
+    msgSearchMatchIds,
+    msgSearchActiveIdx,
+    msgSearchLoading,
+    ensureMessageInThreadForSearch,
+  ]);
 
-  const msgSearchGoPrev = useCallback(() => {
-    if (msgSearchMatchIds.length === 0) return;
+  const msgSearchGoPrev = useCallback(async () => {
+    if (msgSearchMatchIds.length === 0 || msgSearchLoading) return;
     const prev =
       (msgSearchActiveIdx - 1 + msgSearchMatchIds.length) %
       msgSearchMatchIds.length;
-    setMsgSearchActiveIdx(prev);
-    setMsgSearchScrollToId(msgSearchMatchIds[prev]!);
-  }, [msgSearchMatchIds, msgSearchActiveIdx]);
+    const id = msgSearchMatchIds[prev]!;
+    setMsgSearchLoading(true);
+    try {
+      await ensureMessageInThreadForSearch(id);
+      setMsgSearchActiveIdx(prev);
+      setMsgSearchScrollToId(id);
+    } catch {
+      /* toast from api */
+    } finally {
+      setMsgSearchLoading(false);
+    }
+  }, [
+    msgSearchMatchIds,
+    msgSearchActiveIdx,
+    msgSearchLoading,
+    ensureMessageInThreadForSearch,
+  ]);
 
   const msgSearchActiveId =
     msgSearchOpen &&
@@ -609,12 +710,13 @@ export function ChatPage() {
           onDraftChange: setMsgSearchDraft,
           onOpen: () => setMsgSearchOpen(true),
           onClose: closeMessageSearch,
-          onSubmit: runMessageSearch,
+          onSubmit: () => void runMessageSearch(),
           hasRun: msgSearchHasRun,
+          loading: msgSearchLoading,
           matchCount: msgSearchMatchIds.length,
           activeIndex: msgSearchActiveIdx,
-          onPrev: msgSearchGoPrev,
-          onNext: msgSearchGoNext,
+          onPrev: () => void msgSearchGoPrev(),
+          onNext: () => void msgSearchGoNext(),
         }}
       />
 
