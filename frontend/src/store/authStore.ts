@@ -2,7 +2,10 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import axios, { type AxiosError } from "axios";
 import { toast } from "sonner";
-import { ACCOUNT_PERMANENTLY_BANNED } from "../lib/authErrors";
+import {
+  ACCOUNT_PERMANENTLY_BANNED,
+  PASSWORD_CHANGE_REQUIRED,
+} from "../lib/authErrors";
 import { API_BASE } from "../lib/config";
 import type { UserRole } from "../types/user";
 
@@ -18,6 +21,7 @@ export type User = {
   is_active: boolean;
   created_at: string;
   role: UserRole;
+  must_change_password?: boolean;
   /** Public room ban — when backend exposes these on /api/private/me */
   public_ban_until?: string | null;
   public_ban_permanent?: boolean;
@@ -34,6 +38,8 @@ type AuthState = {
   register: (username: string, email: string, password: string) => Promise<void>;
   fetchMe: () => Promise<void>;
   logout: () => void;
+  changePasswordAfterTemporary: (newPassword: string, confirmPassword: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<string>;
 };
 
 function parseUserPayload(data: unknown): User {
@@ -48,6 +54,7 @@ function parseUserPayload(data: unknown): User {
     is_active: Boolean(o.is_active),
     created_at: (o.created_at as string) ?? "",
     role,
+    must_change_password: Boolean(o.must_change_password),
     public_ban_until: (o.public_ban_until as string | null | undefined) ?? undefined,
     public_ban_permanent: Boolean(o.public_ban_permanent),
     is_public_banned: o.is_public_banned as boolean | undefined,
@@ -67,10 +74,11 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => set({ user }),
 
       login: async (email, password) => {
-        const { data } = await raw.post<{ access_token: string; refresh_token: string }>(
-          "/auth/login",
-          { email, password }
-        );
+        const { data } = await raw.post<{
+          access_token: string;
+          refresh_token: string;
+          must_change_password?: boolean;
+        }>("/auth/login", { email, password });
         set({ accessToken: data.access_token, refreshToken: data.refresh_token });
         const me = await raw.get("/api/private/me", {
           headers: { Authorization: `Bearer ${data.access_token}` },
@@ -95,6 +103,29 @@ export const useAuthStore = create<AuthState>()(
       logout: () => {
         set({ accessToken: null, refreshToken: null, user: null });
       },
+
+      changePasswordAfterTemporary: async (newPassword, confirmPassword) => {
+        const token = get().accessToken;
+        if (!token) throw new Error("Not signed in");
+        const { data } = await raw.post<{
+          access_token: string;
+          refresh_token: string;
+        }>("/auth/change-password-after-temporary", {
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        }, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        set({ accessToken: data.access_token, refreshToken: data.refresh_token });
+        await get().fetchMe();
+      },
+
+      requestPasswordReset: async (email) => {
+        const { data } = await raw.post<{ message: string }>("/auth/forgot-password", {
+          email,
+        });
+        return data.message;
+      },
     }),
     {
       name: "chat-auth",
@@ -105,6 +136,11 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+function redirectIfPasswordChangeRequired() {
+  if (window.location.pathname === "/change-password") return;
+  window.location.assign("/change-password");
+}
 
 raw.interceptors.response.use(
   (r) => r,
@@ -120,6 +156,11 @@ raw.interceptors.response.use(
       useAuthStore.getState().logout();
       toast.error(detail);
       window.location.href = "/login";
+      return Promise.reject(err);
+    }
+    if (status === 403 && detail === PASSWORD_CHANGE_REQUIRED) {
+      redirectIfPasswordChangeRequired();
+      return Promise.reject(err);
     }
     return Promise.reject(err);
   }

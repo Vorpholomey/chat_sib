@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import require_full_chat_access
 from app.db.session import get_db
 from app.models.global_message import GlobalMessage
 from app.models.global_read_state import GlobalReadState
@@ -61,7 +61,7 @@ async def _validate_private_message_for_peer(
 
 @router.get("/global", response_model=ReadStateResponse)
 async def get_global_read_state(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> ReadStateResponse:
     await _require_global_feed(current_user)
@@ -74,7 +74,7 @@ async def get_global_read_state(
 @router.patch("/global", response_model=ReadStateResponse)
 async def patch_global_read_state(
     body: PatchGlobalReadStateBody,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> ReadStateResponse:
     await _require_global_feed(current_user)
@@ -91,7 +91,7 @@ async def patch_global_read_state(
 @router.get("/private", response_model=ReadStateResponse)
 async def get_private_read_state(
     peer_id: Annotated[int, Query(..., ge=1, description="The other user in the DM")],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> ReadStateResponse:
     if peer_id == current_user.id:
@@ -117,7 +117,7 @@ async def get_private_read_state(
 @router.patch("/private", response_model=ReadStateResponse)
 async def patch_private_read_state(
     body: PatchPrivateReadStateBody,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ) -> ReadStateResponse:
     if body.peer_id == current_user.id:

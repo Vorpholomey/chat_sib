@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
@@ -24,7 +25,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(subject: str | int, extra_claims: Optional[dict[str, Any]] = None) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode = {"sub": str(subject), "exp": expire, "iat": now, "type": "access"}
+    to_encode = {
+        "sub": str(subject),
+        "exp": expire,
+        "iat": now,
+        "type": "access",
+        "jti": str(uuid.uuid4()),
+    }
     if extra_claims:
         to_encode.update(extra_claims)
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
@@ -33,7 +40,13 @@ def create_access_token(subject: str | int, extra_claims: Optional[dict[str, Any
 def create_refresh_token(subject: str | int) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=settings.refresh_token_expire_days)
-    to_encode = {"sub": str(subject), "exp": expire, "iat": now, "type": "refresh"}
+    to_encode = {
+        "sub": str(subject),
+        "exp": expire,
+        "iat": now,
+        "type": "refresh",
+        "jti": str(uuid.uuid4()),
+    }
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 

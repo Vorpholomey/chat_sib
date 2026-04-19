@@ -99,6 +99,9 @@ async def websocket_global_chat(
     if user.public_ban_permanent:
         await websocket.close(code=4003, reason="Account permanently banned")
         return
+    if user.is_using_temporary_password:
+        await websocket.close(code=4403, reason="PASSWORD_CHANGE_REQUIRED")
+        return
 
     receive_global = permissions.can_access_global_feed(user)
     await ws_manager.connect(websocket, user.id, receive_global=receive_global)

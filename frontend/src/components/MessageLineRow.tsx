@@ -1,5 +1,5 @@
 import { memo, useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
-import { Pin, Reply } from "lucide-react";
+import { Pin } from "lucide-react";
 import { assetUrl } from "../lib/config";
 import { textForMessageSearch } from "../lib/messageSearch";
 import { usernameColorFromUser } from "../lib/usernameColor";
@@ -149,24 +149,7 @@ function MessageLineRowInner({
         }`}
       >
         {own && (
-          <div
-            className={`relative order-first flex min-h-0 shrink-0 flex-col items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
-              onReply ? "justify-between" : "justify-end"
-            }`}
-          >
-            {onReply && (
-              <button
-                type="button"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
-                aria-label="Reply"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onReply(line);
-                }}
-              >
-                <Reply className="h-4 w-4" />
-              </button>
-            )}
+          <div className="relative order-first flex min-h-0 shrink-0 flex-col items-center justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
             <ReactionPickerControl
               reactions={reactions}
               currentUserId={currentUserId}
@@ -327,24 +310,7 @@ function MessageLineRowInner({
           </div>
         </div>
         {!own && (
-          <div
-            className={`relative flex min-h-0 shrink-0 flex-col items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
-              onReply ? "justify-between" : "justify-end"
-            }`}
-          >
-            {onReply && (
-              <button
-                type="button"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white"
-                aria-label="Reply"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onReply(line);
-                }}
-              >
-                <Reply className="h-4 w-4" />
-              </button>
-            )}
+          <div className="relative flex min-h-0 shrink-0 flex-col items-center justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
             <ReactionPickerControl
               reactions={reactions}
               currentUserId={currentUserId}

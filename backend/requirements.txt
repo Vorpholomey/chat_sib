@@ -25,4 +25,5 @@ pydantic-settings==2.1.0
 
 # Utils
 python-dotenv==1.0.1
+aiosmtplib==3.0.1
 bleach==6.2.0

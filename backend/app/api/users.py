@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_current_user
+from app.api.deps import require_full_chat_access
 from app.core.websocket_manager import ws_manager
 from app.db.session import get_db
 from app.models.user import User
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["users"])
 
 @router.get("/users", response_model=list[UserListItem])
 async def list_registered_users(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_full_chat_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Active users for the sidebar, excluding permanently public-banned accounts (not listed in global chat)."""

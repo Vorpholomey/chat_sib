@@ -74,7 +74,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 | `main.py` | App factory: security headers middleware, explicit CORS origins (no `*` with credentials), routers, static mount for `/uploads`, `/health` |
 | `core/config.py` | Pydantic settings: DB URLs, JWT, `CORS_ORIGINS`, upload limits; rejects weak default `SECRET_KEY` when `DEBUG` is false; loads `backend/.env` |
 | `core/security.py` | Password hashing; JWT encode/decode with required `exp`/`sub` on decode |
-| `core/rate_limit.py` | In-process sliding-window limits for `/auth/login` and `/auth/register` (per server worker) |
+| `core/rate_limit.py` | In-process sliding-window limits for `/auth/login`, `/auth/register`, and `/auth/forgot-password` (per server worker) |
 | `core/rich_text.py` | Bleach sanitization for HTML text messages (bold, italic, links, breaks) |
 | `core/websocket_manager.py` | Track connections per user id; broadcast helpers |
 | `db/` | Async engine/session, declarative `Base` |
@@ -89,12 +89,13 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 - **CORS** is configured with an explicit allowlist (`CORS_ORIGINS`, comma-separated). With `DEBUG=true`, local Vite origins are used if the list is empty. Browser `credentials` + wildcard origins are not used (invalid combination).
 - **Registration / login** issue access and refresh tokens; clients send **Bearer** access tokens on HTTP and pass the same token to the WebSocket (query `token=` or `Authorization` header). Login/register are rate-limited in-process per client IP. A **permanent** public chat ban (`public_ban_permanent`) blocks **login**, **token refresh**, and any **authenticated HTTP** call (`get_current_user`); the stable error string is `ACCOUNT_PERMANENTLY_BANNED` in `app/core/auth_constants.py` (aligned with the frontend).
+- **Forgot password / temporary password**: `POST /auth/forgot-password` accepts an email and always returns the same generic message (no account enumeration). If the user exists, the API stores a **bcrypt** hash in `temporary_password_hash`, sets `is_using_temporary_password`, and `temporary_password_expires_at` (15 minutes). Email is sent via SMTP when `SMTP_HOST` is set; otherwise the plaintext temporary password is **logged once at WARNING** for local testing. **Login** with the temporary password succeeds and returns `must_change_password: true` on `LoginResponse`. **Expired** temporary passwords yield **401** with detail `TEMPORARY_PASSWORD_EXPIRED`. Until the password is changed, **`require_full_chat_access`** blocks messaging, uploads, read-state, user list, and private routes other than **`GET /api/private/me`** (detail `PASSWORD_CHANGE_REQUIRED`). **`POST /auth/change-password-after-temporary`** (Bearer, `get_current_user` only) sets a new permanent password and clears temporary fields; it returns a fresh **token pair**. **WebSocket** connections are closed with code **4403** and reason **`PASSWORD_CHANGE_REQUIRED`** when the user is still on a temporary password. **Token refresh** remains allowed while on a temporary password so the client can keep a session for the change-password step.
 - **Users** have a **role** (`user`, `moderator`, `admin`) and optional **public chat ban** (`public_ban_until`, `public_ban_permanent`).
 - **Moderation** endpoints (under `/api`) restrict ban/role actions to appropriate roles; message edit/delete/pin flows check permissions in services.
 
 ### 2.4 WebSocket protocol (`/ws/chat`)
 
-- One connection per authenticated user; server sends **pin state** and the **last 20 global messages** (not the full history), then **`global_history_ready`**. **Permanently banned** accounts cannot open the socket (close code `4003`). Older global messages load via **`GET /api/messages/global/history?before_id=`** when the client scrolls up.
+- One connection per authenticated user; server sends **pin state** and the **last 20 global messages** (not the full history), then **`global_history_ready`**. **Permanently banned** accounts cannot open the socket (close code `4003`). Users who must change a **temporary recovery password** cannot open the socket (close code **4403**, reason **`PASSWORD_CHANGE_REQUIRED`**). Older global messages load via **`GET /api/messages/global/history?before_id=`** when the client scrolls up.
 - Inbound JSON can target the **global room** or a **private** peer via `recipient_id`. For **image** / **gif** messages, optional **`caption`** carries the same sanitized HTML subset as text messages (stored in `caption` columns, separate from the media URL in `content`/`text`).
 - Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`, `global_history_ready`) so the client can branch without guessing shapes.
 
@@ -110,7 +111,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 ### 2.6 Data model (high level)
 
-- **User**: identity, credentials hash, `UserRole`, ban fields, timestamps.
+- **User**: identity, permanent `hashed_password`, optional **temporary password** fields (`temporary_password_hash`, `is_using_temporary_password`, `temporary_password_expires_at`) for email recovery, `UserRole`, ban fields, timestamps.
 - **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented. **Image/gif** rows store the media URL in `content`; optional **`caption`** holds HTML for an accompanying message (same sanitization rules as text).
 - **ChatSettings**: singleton row for room-level settings (currently no pin column; pins live in **`global_pinned_messages`**).
 - **GlobalPinnedMessage**: one row per pinned global message (`message_id` unique, `pinned_at` updated when re-pinning); **API/WebSocket order** is by **message `created_at`** (newest first), not pin time.
@@ -183,6 +184,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 
 - `DATABASE_URL` / `DATABASE_URL_SYNC` — PostgreSQL (async and sync forms)
 - `SECRET_KEY`, token TTLs
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS` (password recovery email; optional in dev)
 - `UPLOAD_DIR`, `MAX_UPLOAD_SIZE_MB`
 - `REDIS_URL` (reserved)
 

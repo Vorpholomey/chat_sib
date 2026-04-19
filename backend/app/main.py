@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.core.config import settings
-from app.api import auth, upload, private, websocket, users, messages, moderation
+from app.api import auth, upload, private, websocket, users, messages, moderation, read_state
 
 
 def _cors_origins() -> list[str]:
@@ -56,6 +56,7 @@ app.include_router(private.router)
 app.include_router(users.router)
 # REST under /api so the Vite dev proxy (and clients using /api/...) match OpenAPI paths.
 app.include_router(messages.router, prefix="/api")
+app.include_router(read_state.router, prefix="/api")
 app.include_router(moderation.router, prefix="/api")
 app.include_router(websocket.router)
 

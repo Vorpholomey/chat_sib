@@ -272,6 +272,11 @@ export function useChatSocket() {
         window.location.href = "/login";
         return;
       }
+      if (ev.code === 4403) {
+        toast.error("You must set a new password to continue.");
+        window.location.assign("/change-password");
+        return;
+      }
       if (!token) return;
       const attempt = attemptRef.current + 1;
       attemptRef.current = attempt;

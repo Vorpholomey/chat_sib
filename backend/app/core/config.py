@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # SMTP (password recovery emails). If smtp_host is empty, recovery still stores a hash
+    # but email is skipped and the plaintext temp password is logged at WARNING (dev).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@localhost"
+    # Port 587: STARTTLS (typical). Port 465: implicit SSL/TLS — see email.py (smtp.mail.ru uses 465).
+    smtp_use_tls: bool = True
+    smtp_timeout_seconds: float = 60.0
+
     # CORS — comma-separated origins, e.g. "https://app.example.com,https://www.example.com"
     # When debug is False, this list is used as-is (empty means no cross-origin browser access).
     # When debug is True and empty, main.py falls back to local Vite defaults.

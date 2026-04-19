@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyQue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth_constants import ACCOUNT_PERMANENTLY_BANNED
+from app.core.auth_constants import ACCOUNT_PERMANENTLY_BANNED, PASSWORD_CHANGE_REQUIRED
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User, UserRole
@@ -76,6 +76,18 @@ async def get_current_user(
     return user
 
 
+async def require_full_chat_access(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Block chat/upload/messages until a temporary recovery password is replaced."""
+    if user.is_using_temporary_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_CHANGE_REQUIRED,
+        )
+    return user
+
+
 async def get_optional_user(
     user_id: Annotated[Optional[int], Depends(get_current_user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -87,7 +99,7 @@ async def get_optional_user(
 
 
 async def require_moderator_or_admin(
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(require_full_chat_access)],
 ) -> User:
     if user.role not in (UserRole.moderator, UserRole.admin):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Moderator or admin required")
@@ -95,7 +107,7 @@ async def require_moderator_or_admin(
 
 
 async def require_admin(
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(require_full_chat_access)],
 ) -> User:
     if user.role != UserRole.admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
