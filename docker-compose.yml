@@ -24,6 +24,14 @@ services:
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in your environment or compose.env (min 32 chars)}
       CORS_ORIGINS: ""
       UPLOAD_DIR: /data/uploads
+      # Optional — password recovery mail (same names as backend/.env; omit or leave empty to skip SMTP)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@localhost}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-60}
     volumes:
       - uploads:/data/uploads
     depends_on:
