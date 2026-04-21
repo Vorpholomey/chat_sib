@@ -1,8 +1,9 @@
 """Per-user last read pointer for the global chat."""
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -23,6 +24,12 @@ class GlobalReadState(Base):
         ForeignKey("global_messages.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    # Null last_read_message_id means the user has not established a cursor yet (treat as new user).
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
 
     user: Mapped["User"] = relationship("User", back_populates="global_read_state")

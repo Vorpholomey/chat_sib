@@ -78,9 +78,9 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 | `core/rich_text.py` | Bleach sanitization for HTML text messages (bold, italic, links, breaks) |
 | `core/websocket_manager.py` | Track connections per user id; broadcast helpers |
 | `db/` | Async engine/session, declarative `Base` |
-| `models/` | ORM: `User`, `GlobalMessage`, `PrivateMessage`, `ChatSettings`, `ModerationAuditLog`, enums |
+| `models/` | ORM: `User`, `GlobalMessage`, `PrivateMessage`, `GlobalReadState`, `PrivateReadState`, `ChatSettings`, `ModerationAuditLog`, enums |
 | `schemas/` | Pydantic request/response DTOs |
-| `api/` | Routers: `auth`, `upload`, `private`, `users`, `websocket`, `messages`, `moderation`, `deps` |
+| `api/` | Routers: `auth`, `upload`, `private`, `users`, `websocket`, `messages`, `moderation`, `read_state`, `chats_read_status`, `deps` |
 | `services/` | Business logic: auth, users, messages, permissions, audit |
 
 **Layering**: HTTP handlers in `api/` depend on `services/` and `models/`; `services/permissions` encodes role and ban rules used by REST and WebSockets.
@@ -108,11 +108,14 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 - **Global context window**: `GET /api/messages/global/context?message_id=&before=&after=` returns a slice of global messages around an id (same payload shape as WebSocket history), used to jump to a pinned message that is not in the currently loaded client window (e.g. older than the last N messages). **403** if the user is permanently banned from public chat.
 - **Upload**: multipart upload → public URL path under `/uploads/...`.
 - **Moderation**: ban user from public chat, change role (admin).
+- **Read status (legacy paths)**: `GET`/`PATCH` `/api/read-state/global` and `/api/read-state/private` — thin wrappers over shared read-state logic (same persistence as below).
+- **Read status (canonical chat paths)**: `GET`/`POST` `/api/chats/{chat_id}/read-status` and `POST` `/api/chats/{chat_id}/mark-all-read`. **`chat_id`** is the literal string **`global`** for the public room, or a **decimal peer user id** for a private DM (the other participant). Responses include **`last_read_message_id`** (nullable = no cursor / “new user” for UX) and **`updated_at`** once a row exists. **POST** cursor updates are **monotonic** (server ignores non-increasing ids with **200**). **mark-all-read** sets the cursor to the latest message id in that chat for the authenticated user.
 
 ### 2.6 Data model (high level)
 
 - **User**: identity, permanent `hashed_password`, optional **temporary password** fields (`temporary_password_hash`, `is_using_temporary_password`, `temporary_password_expires_at`) for email recovery, `UserRole`, ban fields, timestamps.
 - **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented. **Image/gif** rows store the media URL in `content`; optional **`caption`** holds HTML for an accompanying message (same sanitization rules as text).
+- **GlobalReadState** / **PrivateReadState**: per-user last-read message pointer (`last_read_message_id`, nullable FK to the corresponding message table) and **`updated_at`** for sync/UX; private state is keyed by **`(user_id, peer_id)`**.
 - **ChatSettings**: singleton row for room-level settings (currently no pin column; pins live in **`global_pinned_messages`**).
 - **GlobalPinnedMessage**: one row per pinned global message (`message_id` unique, `pinned_at` updated when re-pinning); **API/WebSocket order** is by **message `created_at`** (newest first), not pin time.
 - **ModerationAuditLog**: audit trail for moderation actions where used.
@@ -164,6 +167,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 ### 3.4 Client realtime model
 
 - Single WebSocket connection tied to the logged-in user; events update Zustand stores so `MessageThread`, sidebar, and pins stay consistent.
+- **Read receipts / scroll position**: `useReadMessageHistory` loads **`/api/chats/{chat_id}/read-status`**, debounces **`POST`** updates while scrolling (Intersection Observer on rows), flushes on scope change/unmount, and uses **`POST .../mark-all-read`** when jumping to newest or when the tab becomes visible with unread messages. **`frontend/src/lib/readState.ts`** maps **`global`** / peer id to `chat_id` and wraps the chat endpoints (legacy **`/api/read-state/*`** names may still call the new routes). A **localStorage** cache hydrates before the GET completes; **server wins** after fetch. **`MessageThread`** renders a list-backed **“New messages”** divider and a jump control with an unread count derived from **list indices**, not raw id arithmetic.
 - **Pinned messages (global)**: multiple pins; WebSocket `pin_changed` includes **`pinned_messages`** ordered by **message creation time** (newest first). The sticky bar shows one preview at a time; after each successful jump-to-message, the preview **cycles** to the next pin (with enter animation). **`pinnedGlobalMessages`** in the store holds the full ordered list; **`pinnedPreviewIndex`** picks the active bar preview.
 - **Jump to pinned message**: clicking the pinned bar or the pin marker on the message row scrolls the thread to that message (centered), applies a short highlight, and merges additional history via `mergeGlobalLines` + the context endpoint when the message is not already in memory.
 - Tokens live in **localStorage** (persisted store) under keys such as `chat-auth` (see `authStore`).

@@ -1,6 +1,14 @@
-import { memo, useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from "react";
 import { Pin } from "lucide-react";
 import { assetUrl } from "../lib/config";
+import { numericMessageId } from "../lib/messageId";
 import { textForMessageSearch } from "../lib/messageSearch";
 import { usernameColorFromUser } from "../lib/usernameColor";
 import { formatTimeHm } from "../store/chatStore";
@@ -39,6 +47,9 @@ export type MessageLineRowProps = {
   /** Substring for inline <mark> in body when this line is a search hit. */
   searchHighlightQuery?: string | null;
   threadRef: RefObject<HTMLDivElement | null>;
+  /** When true, report visibility for read cursor (treb block 3). */
+  readTrackEnabled?: boolean;
+  onReadVisibleMessage?: (messageId: number) => void;
   onContextMenu: (line: ChatLine, e: ReactMouseEvent) => void;
   onReply?: (line: ChatLine) => void;
   onEditOwn?: (line: ChatLine) => void;
@@ -63,6 +74,8 @@ function MessageLineRowInner({
   searchActiveMessageId = null,
   searchHighlightQuery = null,
   threadRef,
+  readTrackEnabled = false,
+  onReadVisibleMessage,
   onContextMenu,
   onReply,
   onEditOwn,
@@ -137,8 +150,37 @@ function MessageLineRowInner({
   const imageSrc =
     line.contentType !== "text" ? assetUrl(line.body) : "";
 
+  const rowRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (!readTrackEnabled || !onReadVisibleMessage) return;
+    const root = threadRef.current;
+    const el = rowRef.current;
+    if (!root || !el) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const rootBounds = root.getBoundingClientRect();
+          const half = entry.intersectionRatio >= 0.5;
+          const topEdge =
+            entry.boundingClientRect.top <= rootBounds.top + 2 &&
+            entry.boundingClientRect.bottom > rootBounds.top;
+          if (!half && !topEdge) continue;
+          const n = numericMessageId(line.id);
+          if (Number.isFinite(n)) onReadVisibleMessage(n);
+        }
+      },
+      { root, rootMargin: "0px", threshold: [0, 0.25, 0.5, 0.75, 1] }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [readTrackEnabled, onReadVisibleMessage, threadRef, line.id]);
+
   return (
     <li
+      ref={rowRef}
       data-chat-message-id={String(line.id)}
       className="group relative mb-3 text-sm leading-relaxed text-slate-200 last:mb-0"
       onContextMenu={hasMenu ? (e) => onContextMenu(line, e) : undefined}

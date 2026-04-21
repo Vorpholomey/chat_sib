@@ -1,11 +1,51 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { getReadState, patchReadState } from "../lib/readState";
+import {
+  encodeChatReadId,
+  getChatReadStatus,
+  postChatMarkAllRead,
+  postChatReadStatus,
+} from "../lib/readState";
 import { numericMessageId } from "../lib/messageId";
 import type { ChatLine, ChatMode } from "../types/chat";
 
-const SCROLL_PATCH_MIN_MS = 2500;
+/** Debounced read cursor POST interval (treb.rtf block 3: ~2–3s). */
+const READ_POST_DEBOUNCE_MS = 2500;
+
+/**
+ * Persist last-read per chat for snappy reloads. Merge policy: **server wins** —
+ * after every successful GET we overwrite this key with the server snapshot; any
+ * optimistic local advance is replaced when the response arrives.
+ */
+const LS_KEY_PREFIX = "chatReadCursor:v1:";
+
+function lsKey(chatId: string): string {
+  return `${LS_KEY_PREFIX}${chatId}`;
+}
+
+function readCachedLastRead(chatId: string): number | null | undefined {
+  try {
+    const raw = localStorage.getItem(lsKey(chatId));
+    if (raw == null) return undefined;
+    const v = JSON.parse(raw) as { last_read_message_id?: unknown };
+    if (v.last_read_message_id == null) return null;
+    if (typeof v.last_read_message_id !== "number" || !Number.isFinite(v.last_read_message_id)) {
+      return undefined;
+    }
+    return v.last_read_message_id;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedLastRead(chatId: string, last_read_message_id: number | null): void {
+  try {
+    localStorage.setItem(lsKey(chatId), JSON.stringify({ last_read_message_id }));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 export type ReadScope = "global" | { peerId: number };
 
@@ -18,20 +58,27 @@ function matchesActiveScope(
   return mode === "private" && peerId === scope.peerId;
 }
 
-function maxMessageId(lines: ChatLine[]): number | null {
-  let max: number | null = null;
-  for (const l of lines) {
-    const n = numericMessageId(l.id);
-    if (!Number.isFinite(n)) continue;
-    if (max == null || n > max) max = n;
-  }
-  return max;
-}
-
 function isOwnLine(line: ChatLine, me?: number): boolean {
   if (line.isOwn === true) return true;
   if (me != null && line.senderId != null && line.senderId === me) return true;
   return false;
+}
+
+/** Index of first line with numeric id > lastRead; `null` if none / nothing unread. */
+export function firstUnreadLineIndex(lines: ChatLine[], lastRead: number | null): number | null {
+  if (lastRead == null) return null;
+  for (let i = 0; i < lines.length; i++) {
+    const n = numericMessageId(lines[i]!.id);
+    if (!Number.isFinite(n)) continue;
+    if (n > lastRead) return i;
+  }
+  return null;
+}
+
+export function unreadCountFromLines(lines: ChatLine[], lastRead: number | null): number {
+  const first = firstUnreadLineIndex(lines, lastRead);
+  if (first == null) return 0;
+  return lines.length - first;
 }
 
 export type UseReadMessageHistoryArgs = {
@@ -45,20 +92,20 @@ export type UseReadMessageHistoryArgs = {
 
 export type UseReadMessageHistoryResult = {
   loaded: boolean;
-  /** Effective last-read cursor for divider / read logic; null only before first server value or new-user pre-PATCH. */
+  /** Effective last-read cursor; null before server or explicit “no cursor”. */
   lastReadMessageId: number | null;
-  /** Badge on jump-to-newest: only unfocused/away accumulation, not history or focused realtime. */
-  awayUnreadBadge: number;
-  /** Scroll to this message on first thread fill; null = scroll to bottom (new user or no cursor). */
+  /** Messages after server cursor (list indices; ids may gap). */
+  unreadCount: number;
+  /** Insert “New messages” divider immediately before this line index; `null` = none. */
+  unreadDividerBeforeIndex: number | null;
+  /** Scroll to this message on first thread fill; `null` = scroll to last message. */
   initialScrollMessageId: string | number | null;
-  /** New user: do not PATCH from scroll until user leaves bottom / first read action. */
+  /** New user: do not POST from scroll until user leaves bottom / first read action. */
   newUserScrollPatchBlocked: boolean;
-  /** Call when user scrolls away from bottom (enables scroll-driven PATCH for new users). */
   onLeftBottom: () => void;
-  /** Intersection observer: visible sufficiently-read message id. */
   onVisibleReadCandidate: (messageId: number) => void;
-  /** After jump-to-newest scroll completes. */
-  onJumpToNewest: (newestId: number) => void;
+  /** After jump-to-newest control: mark all read on server + local cursor. */
+  onJumpToNewest: () => void;
   /** WebSocket added a chat line for the active scope (after store update). */
   onChatMessageAdded: (line: ChatLine, scope: ReadScope) => void;
   flushPendingPatch: () => void;
@@ -69,30 +116,26 @@ export function useReadMessageHistory(
 ): UseReadMessageHistoryResult {
   const { mode, peerId, lines, currentUserId, enabled } = args;
 
-  /** When `readParams` is set, becomes true after GET completes (or error). Ignored when there is no read scope. */
   const [fetchReady, setFetchReady] = useState(false);
   const [serverLastRead, setServerLastRead] = useState<number | null>(null);
   const [lastRead, setLastRead] = useState<number | null>(null);
-  const [awayUnreadBadge, setAwayUnreadBadge] = useState(0);
   const [initialScrollMessageId, setInitialScrollMessageId] = useState<
     string | number | null
   >(null);
-  const [newUserScrollPatchBlocked, setNewUserScrollPatchBlocked] =
-    useState(false);
+  const [newUserScrollPatchBlocked, setNewUserScrollPatchBlocked] = useState(false);
 
   const global403Ref = useRef(false);
   const scrollPatchEnabledRef = useRef(false);
-  const lastPatchAtRef = useRef(0);
-  const pendingPatchIdRef = useRef<number | null>(null);
-  const patchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPostAtRef = useRef(0);
+  const pendingPostIdRef = useRef<number | null>(null);
+  const postTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastReadRef = useRef<number | null>(null);
   const serverLastReadRef = useRef<number | null>(null);
   const linesRef = useRef(lines);
-  const prevFocusedRef = useRef(
-    typeof document !== "undefined" &&
-      document.visibilityState === "visible" &&
-      document.hasFocus()
+  const prevVisibleRef = useRef(
+    typeof document !== "undefined" && document.visibilityState === "visible"
   );
+  const chatIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     linesRef.current = lines;
@@ -101,55 +144,64 @@ export function useReadMessageHistory(
   useEffect(() => {
     lastReadRef.current = lastRead;
   }, [lastRead]);
+
   useEffect(() => {
     serverLastReadRef.current = serverLastRead;
   }, [serverLastRead]);
 
   const readParams = useMemo(() => {
     if (!enabled) return null;
-    if (mode === "private" && peerId != null) {
-      return { scope: "private" as const, peerId };
-    }
-    if (mode === "global") {
-      return { scope: "global" as const };
-    }
-    return null;
+    const chatId = encodeChatReadId(mode, peerId);
+    if (chatId == null) return null;
+    if (mode === "private" && peerId == null) return null;
+    return { chatId, mode, peerId } as const;
   }, [enabled, mode, peerId]);
+
+  useEffect(() => {
+    chatIdRef.current = readParams?.chatId ?? null;
+  }, [readParams]);
 
   const readStateReady = readParams == null || fetchReady;
 
-  const runPatch = useCallback(
-    async (id: number, immediate: boolean) => {
-      if (!enabled || global403Ref.current) return;
-      const params = readParams;
-      if (!params) return;
-      if (params.scope === "global") {
-        await patchReadState({ scope: "global", last_read_message_id: id });
-      } else {
-        await patchReadState({
-          scope: "private",
-          peer_id: params.peerId,
-          last_read_message_id: id,
-        });
-      }
-      if (immediate) {
-        lastPatchAtRef.current = Date.now();
-      }
-    },
-    [enabled, readParams]
+  const unreadDividerBeforeIndex = useMemo(
+    () => firstUnreadLineIndex(lines, lastRead),
+    [lines, lastRead]
   );
 
-  const schedulePatch = useCallback(
+  const unreadCount = useMemo(
+    () => unreadCountFromLines(lines, lastRead),
+    [lines, lastRead]
+  );
+
+  const clearPostTimer = useCallback(() => {
+    if (postTimerRef.current) {
+      clearTimeout(postTimerRef.current);
+      postTimerRef.current = null;
+    }
+  }, []);
+
+  const runPost = useCallback(
+    async (id: number, immediate: boolean) => {
+      if (!enabled || global403Ref.current) return;
+      const chatId = chatIdRef.current;
+      if (!chatId) return;
+      await postChatReadStatus(chatId, id);
+      if (immediate) {
+        lastPostAtRef.current = Date.now();
+      }
+      writeCachedLastRead(chatId, id);
+    },
+    [enabled]
+  );
+
+  const schedulePost = useCallback(
     (id: number, immediate: boolean) => {
       if (!enabled || global403Ref.current) return;
       const now = Date.now();
       if (immediate) {
-        if (patchTimerRef.current) {
-          clearTimeout(patchTimerRef.current);
-          patchTimerRef.current = null;
-        }
-        pendingPatchIdRef.current = null;
-        void runPatch(id, true).catch((err) => {
+        clearPostTimer();
+        pendingPostIdRef.current = null;
+        void runPost(id, true).catch((err) => {
           if (axios.isAxiosError(err) && err.response?.status === 403) {
             global403Ref.current = true;
             return;
@@ -159,24 +211,22 @@ export function useReadMessageHistory(
         return;
       }
 
-      pendingPatchIdRef.current =
-        pendingPatchIdRef.current == null
+      pendingPostIdRef.current =
+        pendingPostIdRef.current == null
           ? id
-          : Math.max(pendingPatchIdRef.current, id);
+          : Math.max(pendingPostIdRef.current, id);
 
-      const elapsed = now - lastPatchAtRef.current;
-      const delay = Math.max(0, SCROLL_PATCH_MIN_MS - elapsed);
+      const elapsed = now - lastPostAtRef.current;
+      const delay = Math.max(0, READ_POST_DEBOUNCE_MS - elapsed);
 
-      if (patchTimerRef.current) {
-        clearTimeout(patchTimerRef.current);
-      }
-      patchTimerRef.current = window.setTimeout(() => {
-        patchTimerRef.current = null;
-        const pending = pendingPatchIdRef.current;
-        pendingPatchIdRef.current = null;
+      clearPostTimer();
+      postTimerRef.current = window.setTimeout(() => {
+        postTimerRef.current = null;
+        const pending = pendingPostIdRef.current;
+        pendingPostIdRef.current = null;
         if (pending == null) return;
-        lastPatchAtRef.current = Date.now();
-        void runPatch(pending, false).catch((err) => {
+        lastPostAtRef.current = Date.now();
+        void runPost(pending, false).catch((err) => {
           if (axios.isAxiosError(err) && err.response?.status === 403) {
             global403Ref.current = true;
             return;
@@ -185,28 +235,24 @@ export function useReadMessageHistory(
         });
       }, delay);
     },
-    [enabled, runPatch]
+    [enabled, runPost, clearPostTimer]
   );
 
   const flushPendingPatch = useCallback(() => {
-    if (patchTimerRef.current) {
-      clearTimeout(patchTimerRef.current);
-      patchTimerRef.current = null;
-    }
-    const pending = pendingPatchIdRef.current;
-    pendingPatchIdRef.current = null;
+    clearPostTimer();
+    const pending = pendingPostIdRef.current;
+    pendingPostIdRef.current = null;
     if (pending == null) return;
-    lastPatchAtRef.current = Date.now();
-    void runPatch(pending, false).catch((err) => {
+    lastPostAtRef.current = Date.now();
+    void runPost(pending, false).catch((err) => {
       if (axios.isAxiosError(err) && err.response?.status === 403) {
         global403Ref.current = true;
         return;
       }
       toast.error("Could not update read position");
     });
-  }, [runPatch]);
+  }, [runPost, clearPostTimer]);
 
-  /** Reset client read state when there is no API scope (disabled / no peer). */
   useEffect(() => {
     if (readParams != null) return;
     queueMicrotask(() => {
@@ -215,11 +261,9 @@ export function useReadMessageHistory(
       setInitialScrollMessageId(null);
       setNewUserScrollPatchBlocked(false);
       scrollPatchEnabledRef.current = false;
-      setAwayUnreadBadge(0);
     });
   }, [readParams]);
 
-  /** Load GET read state when scope changes. */
   useEffect(() => {
     if (!readParams) {
       return;
@@ -227,7 +271,6 @@ export function useReadMessageHistory(
 
     let cancelled = false;
 
-    /* Batch-reset when `readParams` changes so the UI does not briefly keep another scope’s cursor. */
     /* eslint-disable react-hooks/set-state-in-effect */
     setFetchReady(false);
     setServerLastRead(null);
@@ -237,16 +280,18 @@ export function useReadMessageHistory(
     setInitialScrollMessageId(null);
     setNewUserScrollPatchBlocked(false);
     scrollPatchEnabledRef.current = false;
-    setAwayUnreadBadge(0);
     /* eslint-enable react-hooks/set-state-in-effect */
+
+    const { chatId } = readParams;
+    const cached = readCachedLastRead(chatId);
+    if (cached !== undefined) {
+      setLastRead(cached);
+      lastReadRef.current = cached;
+    }
 
     (async () => {
       try {
-        const data = await getReadState(
-          readParams.scope === "global"
-            ? { scope: "global" }
-            : { scope: "private", peerId: readParams.peerId }
-        );
+        const data = await getChatReadStatus(chatId);
         if (cancelled) return;
         global403Ref.current = false;
         setFetchReady(true);
@@ -255,6 +300,7 @@ export function useReadMessageHistory(
         setLastRead(lr);
         lastReadRef.current = lr;
         serverLastReadRef.current = lr;
+        writeCachedLastRead(chatId, lr);
 
         if (lr === null) {
           setInitialScrollMessageId(null);
@@ -265,12 +311,11 @@ export function useReadMessageHistory(
           setNewUserScrollPatchBlocked(false);
           scrollPatchEnabledRef.current = true;
         }
-        setAwayUnreadBadge(0);
-        lastPatchAtRef.current = Date.now();
+        lastPostAtRef.current = Date.now();
       } catch (err) {
         if (cancelled) return;
         if (axios.isAxiosError(err) && err.response?.status === 403) {
-          if (readParams.scope === "global") {
+          if (readParams.mode === "global") {
             global403Ref.current = true;
             setFetchReady(true);
             setServerLastRead(null);
@@ -292,59 +337,77 @@ export function useReadMessageHistory(
     };
   }, [readParams, flushPendingPatch]);
 
-  const chatFocused = useCallback((): boolean => {
-    return (
-      document.visibilityState === "visible" && document.hasFocus()
-    );
-  }, []);
-
-  /** Bump last_read to at least `id` (local + optional PATCH). */
   const bumpLastRead = useCallback(
-    (id: number, patchImmediate: boolean) => {
+    (id: number, postImmediate: boolean) => {
       setLastRead((prev) => {
         const next = prev == null ? id : Math.max(prev, id);
         lastReadRef.current = next;
+        const cid = chatIdRef.current;
+        if (cid) writeCachedLastRead(cid, next);
         return next;
       });
-      if (patchImmediate) {
-        schedulePatch(id, true);
+      if (postImmediate) {
+        schedulePost(id, true);
       }
     },
-    [schedulePatch]
+    [schedulePost]
   );
 
-  /** Transition to focused: mark everything read, clear away badge (not on initial mount). */
+  const applyMarkAllReadSnapshot = useCallback((lr: number | null) => {
+    setServerLastRead(lr);
+    setLastRead(lr);
+    lastReadRef.current = lr;
+    serverLastReadRef.current = lr;
+    const cid = chatIdRef.current;
+    if (cid) writeCachedLastRead(cid, lr);
+    if (lr === null) {
+      setNewUserScrollPatchBlocked(true);
+      scrollPatchEnabledRef.current = false;
+    } else {
+      setNewUserScrollPatchBlocked(false);
+      scrollPatchEnabledRef.current = true;
+    }
+  }, []);
+
+  const markAllReadRemote = useCallback(async () => {
+    if (!enabled || global403Ref.current) return;
+    const chatId = chatIdRef.current;
+    if (!chatId) return;
+    clearPostTimer();
+    pendingPostIdRef.current = null;
+    const snap = await postChatMarkAllRead(chatId);
+    applyMarkAllReadSnapshot(snap.last_read_message_id);
+    lastPostAtRef.current = Date.now();
+  }, [enabled, clearPostTimer, applyMarkAllReadSnapshot]);
+
+  /** Tab visible again: only mark-all-read when list-derived unread > 0 (treb block 8). */
   useEffect(() => {
-    const sync = () => {
-      const now =
-        document.visibilityState === "visible" && document.hasFocus();
-      const prev = prevFocusedRef.current;
-      prevFocusedRef.current = now;
-      if (!now || prev !== false) return;
+    const onVisibility = () => {
+      const visible = document.visibilityState === "visible";
+      const wasVisible = prevVisibleRef.current;
+      prevVisibleRef.current = visible;
+      if (!visible || wasVisible) return;
+      if (!enabled || global403Ref.current || !readStateReady) return;
 
-      const maxId = maxMessageId(linesRef.current);
-      if (maxId == null) {
-        setAwayUnreadBadge(0);
-        return;
-      }
-      if (!enabled || global403Ref.current) {
-        setAwayUnreadBadge(0);
-        return;
-      }
-      setAwayUnreadBadge(0);
-      bumpLastRead(maxId, true);
-    };
-    document.addEventListener("visibilitychange", sync);
-    window.addEventListener("focus", sync);
-    window.addEventListener("blur", sync);
-    return () => {
-      document.removeEventListener("visibilitychange", sync);
-      window.removeEventListener("focus", sync);
-      window.removeEventListener("blur", sync);
-    };
-  }, [enabled, bumpLastRead]);
+      const lr = lastReadRef.current;
+      const list = linesRef.current;
+      const first = firstUnreadLineIndex(list, lr);
+      const unread = first == null ? 0 : list.length - first;
+      if (unread <= 0) return;
 
-  /** Own messages in the thread always advance read cursor locally. */
+      void markAllReadRemote().catch((err) => {
+        if (axios.isAxiosError(err) && err.response?.status === 403) {
+          global403Ref.current = true;
+          return;
+        }
+        toast.error("Could not mark messages read");
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [enabled, readStateReady, markAllReadRemote]);
+
+  /** Own lines always advance read cursor (treb block 10: own send is read; uses POST cursor, not mark-all). */
   useEffect(() => {
     if (!readStateReady || !enabled) return;
     let maxOwn: number | null = null;
@@ -361,11 +424,13 @@ export function useReadMessageHistory(
       setLastRead((prev) => {
         const next = prev == null ? maxOwn! : Math.max(prev, maxOwn!);
         lastReadRef.current = next;
+        const cid = chatIdRef.current;
+        if (cid) writeCachedLastRead(cid, next);
         return next;
       });
-      schedulePatch(maxOwn, true);
+      schedulePost(maxOwn, true);
     }
-  }, [lines, readStateReady, enabled, currentUserId, schedulePatch]);
+  }, [lines, readStateReady, enabled, currentUserId, schedulePost]);
 
   const onLeftBottom = useCallback(() => {
     if (newUserScrollPatchBlocked) {
@@ -389,21 +454,25 @@ export function useReadMessageHistory(
       setLastRead((prev) => {
         const next = prev == null ? messageId : Math.max(prev, messageId);
         lastReadRef.current = next;
+        const cid = chatIdRef.current;
+        if (cid) writeCachedLastRead(cid, next);
         return next;
       });
-      schedulePatch(messageId, false);
+      schedulePost(messageId, false);
     },
-    [enabled, schedulePatch]
+    [enabled, schedulePost]
   );
 
-  const onJumpToNewest = useCallback(
-    (newestId: number) => {
-      if (!enabled || global403Ref.current) return;
-      setAwayUnreadBadge(0);
-      bumpLastRead(newestId, true);
-    },
-    [enabled, bumpLastRead]
-  );
+  const onJumpToNewest = useCallback(() => {
+    if (!enabled || global403Ref.current) return;
+    void markAllReadRemote().catch((err) => {
+      if (axios.isAxiosError(err) && err.response?.status === 403) {
+        global403Ref.current = true;
+        return;
+      }
+      toast.error("Could not mark messages read");
+    });
+  }, [enabled, markAllReadRemote]);
 
   const onChatMessageAdded = useCallback(
     (line: ChatLine, scope: ReadScope) => {
@@ -414,22 +483,18 @@ export function useReadMessageHistory(
       const id = numericMessageId(line.id);
       if (!Number.isFinite(id)) return;
 
+      const tabVisible = document.visibilityState === "visible";
+
       if (isOwnLine(line, currentUserId)) {
         bumpLastRead(id, true);
         return;
       }
 
-      const focused = chatFocused();
-      if (focused) {
+      if (tabVisible) {
         bumpLastRead(id, true);
-      } else {
-        const lr = lastReadRef.current;
-        if (lr == null || id > lr) {
-          setAwayUnreadBadge((c) => c + 1);
-        }
       }
     },
-    [mode, peerId, enabled, readStateReady, currentUserId, bumpLastRead, chatFocused]
+    [mode, peerId, enabled, readStateReady, currentUserId, bumpLastRead]
   );
 
   useEffect(() => {
@@ -438,16 +503,32 @@ export function useReadMessageHistory(
     };
   }, [flushPendingPatch]);
 
-  return {
-    loaded: readStateReady,
-    lastReadMessageId: lastRead,
-    awayUnreadBadge,
-    initialScrollMessageId,
-    newUserScrollPatchBlocked,
-    onLeftBottom,
-    onVisibleReadCandidate,
-    onJumpToNewest,
-    onChatMessageAdded,
-    flushPendingPatch,
-  };
+  return useMemo(
+    () => ({
+      loaded: readStateReady,
+      lastReadMessageId: lastRead,
+      unreadCount,
+      unreadDividerBeforeIndex,
+      initialScrollMessageId,
+      newUserScrollPatchBlocked,
+      onLeftBottom,
+      onVisibleReadCandidate,
+      onJumpToNewest,
+      onChatMessageAdded,
+      flushPendingPatch,
+    }),
+    [
+      readStateReady,
+      lastRead,
+      unreadCount,
+      unreadDividerBeforeIndex,
+      initialScrollMessageId,
+      newUserScrollPatchBlocked,
+      onLeftBottom,
+      onVisibleReadCandidate,
+      onJumpToNewest,
+      onChatMessageAdded,
+      flushPendingPatch,
+    ]
+  );
 }
