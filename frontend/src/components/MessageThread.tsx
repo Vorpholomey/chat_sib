@@ -484,8 +484,8 @@ export function MessageThread({
               ) {
                 nodes.push(
                   <li
-                    key={`new-msgs-divider-${lineKey(line)}`}
-                    className="mb-3 list-none"
+                    key={`new-msgs-divider-${String(line.id)}`}
+                    className="sticky top-0 z-[5] mb-3 list-none bg-slate-900/95 py-1 backdrop-blur-sm"
                     aria-hidden
                   >
                     <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-sky-400/90">

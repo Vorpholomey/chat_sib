@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   encodeChatReadId,
@@ -81,6 +81,18 @@ export function unreadCountFromLines(lines: ChatLine[], lastRead: number | null)
   return lines.length - first;
 }
 
+/** Row index for a message id, or null if absent (e.g. deleted). */
+export function lineIndexForMessageId(
+  lines: ChatLine[],
+  messageId: number
+): number | null {
+  for (let i = 0; i < lines.length; i++) {
+    const n = numericMessageId(lines[i]!.id);
+    if (Number.isFinite(n) && n === messageId) return i;
+  }
+  return null;
+}
+
 export type UseReadMessageHistoryArgs = {
   mode: ChatMode;
   peerId: number | null;
@@ -123,6 +135,10 @@ export function useReadMessageHistory(
     string | number | null
   >(null);
   const [newUserScrollPatchBlocked, setNewUserScrollPatchBlocked] = useState(false);
+  /** First unread message id when unread count went 0 → &gt;0; divider stays until count is 0. */
+  const [dividerBatchStartMessageId, setDividerBatchStartMessageId] = useState<
+    number | null
+  >(null);
 
   const global403Ref = useRef(false);
   const scrollPatchEnabledRef = useRef(false);
@@ -136,6 +152,7 @@ export function useReadMessageHistory(
     typeof document !== "undefined" && document.visibilityState === "visible"
   );
   const chatIdRef = useRef<string | null>(null);
+  const prevUnreadCountRef = useRef(0);
 
   useEffect(() => {
     linesRef.current = lines;
@@ -163,15 +180,49 @@ export function useReadMessageHistory(
 
   const readStateReady = readParams == null || fetchReady;
 
-  const unreadDividerBeforeIndex = useMemo(
-    () => firstUnreadLineIndex(lines, lastRead),
-    [lines, lastRead]
-  );
-
   const unreadCount = useMemo(
     () => unreadCountFromLines(lines, lastRead),
     [lines, lastRead]
   );
+
+  /* eslint-disable react-hooks/set-state-in-effect -- batch divider anchor on unread 0→N transitions */
+  useLayoutEffect(() => {
+    if (!readStateReady || !enabled) return;
+
+    if (unreadCount === 0) {
+      setDividerBatchStartMessageId(null);
+      prevUnreadCountRef.current = 0;
+      return;
+    }
+
+    const prev = prevUnreadCountRef.current;
+    prevUnreadCountRef.current = unreadCount;
+
+    if (prev === 0 && unreadCount > 0) {
+      const idx = firstUnreadLineIndex(lines, lastRead);
+      if (idx != null) {
+        const id = numericMessageId(lines[idx]!.id);
+        if (Number.isFinite(id)) setDividerBatchStartMessageId(id);
+      }
+    }
+  }, [unreadCount, lines, lastRead, readStateReady, enabled]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const unreadDividerBeforeIndex = useMemo(() => {
+    if (!readStateReady || !enabled || unreadCount === 0) return null;
+    if (dividerBatchStartMessageId != null) {
+      const at = lineIndexForMessageId(lines, dividerBatchStartMessageId);
+      if (at != null) return at;
+    }
+    return firstUnreadLineIndex(lines, lastRead);
+  }, [
+    readStateReady,
+    enabled,
+    unreadCount,
+    lines,
+    lastRead,
+    dividerBatchStartMessageId,
+  ]);
 
   const clearPostTimer = useCallback(() => {
     if (postTimerRef.current) {
@@ -261,6 +312,8 @@ export function useReadMessageHistory(
       setInitialScrollMessageId(null);
       setNewUserScrollPatchBlocked(false);
       scrollPatchEnabledRef.current = false;
+      setDividerBatchStartMessageId(null);
+      prevUnreadCountRef.current = 0;
     });
   }, [readParams]);
 
@@ -280,6 +333,8 @@ export function useReadMessageHistory(
     setInitialScrollMessageId(null);
     setNewUserScrollPatchBlocked(false);
     scrollPatchEnabledRef.current = false;
+    setDividerBatchStartMessageId(null);
+    prevUnreadCountRef.current = 0;
     /* eslint-enable react-hooks/set-state-in-effect */
 
     const { chatId } = readParams;
