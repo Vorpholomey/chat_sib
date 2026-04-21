@@ -20,13 +20,17 @@ const READ_POST_DEBOUNCE_MS = 2500;
  */
 const LS_KEY_PREFIX = "chatReadCursor:v1:";
 
-function lsKey(chatId: string): string {
-  return `${LS_KEY_PREFIX}${chatId}`;
+function lsKey(chatId: string, userId: number | undefined): string {
+  const who = userId != null && Number.isFinite(userId) ? String(userId) : "anon";
+  return `${LS_KEY_PREFIX}${who}:${chatId}`;
 }
 
-function readCachedLastRead(chatId: string): number | null | undefined {
+function readCachedLastRead(
+  chatId: string,
+  userId: number | undefined
+): number | null | undefined {
   try {
-    const raw = localStorage.getItem(lsKey(chatId));
+    const raw = localStorage.getItem(lsKey(chatId, userId));
     if (raw == null) return undefined;
     const v = JSON.parse(raw) as { last_read_message_id?: unknown };
     if (v.last_read_message_id == null) return null;
@@ -39,9 +43,16 @@ function readCachedLastRead(chatId: string): number | null | undefined {
   }
 }
 
-function writeCachedLastRead(chatId: string, last_read_message_id: number | null): void {
+function writeCachedLastRead(
+  chatId: string,
+  userId: number | undefined,
+  last_read_message_id: number | null
+): void {
   try {
-    localStorage.setItem(lsKey(chatId), JSON.stringify({ last_read_message_id }));
+    localStorage.setItem(
+      lsKey(chatId, userId),
+      JSON.stringify({ last_read_message_id })
+    );
   } catch {
     /* ignore quota / private mode */
   }
@@ -93,6 +104,17 @@ export function lineIndexForMessageId(
   return null;
 }
 
+/** Smallest numeric message id in the loaded list (chronological first row). */
+export function minLoadedNumericId(lines: ChatLine[]): number | null {
+  let min: number | null = null;
+  for (const l of lines) {
+    const n = numericMessageId(l.id);
+    if (!Number.isFinite(n)) continue;
+    min = min == null ? n : Math.min(min, n);
+  }
+  return min;
+}
+
 export type UseReadMessageHistoryArgs = {
   mode: ChatMode;
   peerId: number | null;
@@ -100,6 +122,11 @@ export type UseReadMessageHistoryArgs = {
   currentUserId?: number;
   /** When false (e.g. global room unavailable), skip all read-state API calls. */
   enabled: boolean;
+  /**
+   * True when older pages can be loaded (scroll-up). Used with oldest loaded id vs
+   * `last_read` to detect a pagination gap (WS tail without middle history).
+   */
+  hasMoreOlder?: boolean;
 };
 
 export type UseReadMessageHistoryResult = {
@@ -108,6 +135,8 @@ export type UseReadMessageHistoryResult = {
   lastReadMessageId: number | null;
   /** Messages after server cursor (list indices; ids may gap). */
   unreadCount: number;
+  /** True when oldest loaded id &gt; last_read+1 (more unread exist above the window). */
+  unreadBadgeAtLeast: boolean;
   /** Insert “New messages” divider immediately before this line index; `null` = none. */
   unreadDividerBeforeIndex: number | null;
   /** Scroll to this message on first thread fill; `null` = scroll to last message. */
@@ -126,7 +155,7 @@ export type UseReadMessageHistoryResult = {
 export function useReadMessageHistory(
   args: UseReadMessageHistoryArgs
 ): UseReadMessageHistoryResult {
-  const { mode, peerId, lines, currentUserId, enabled } = args;
+  const { mode, peerId, lines, currentUserId, enabled, hasMoreOlder = false } = args;
 
   const [fetchReady, setFetchReady] = useState(false);
   const [serverLastRead, setServerLastRead] = useState<number | null>(null);
@@ -153,6 +182,14 @@ export function useReadMessageHistory(
   );
   const chatIdRef = useRef<string | null>(null);
   const prevUnreadCountRef = useRef(0);
+  const userIdRef = useRef(currentUserId);
+  /** After snapshot with a cursor, ignore intersection-driven read bumps until this time (layout/IO noise). */
+  const readCursorIoGateUntilRef = useRef(0);
+  const lastDocHiddenAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    userIdRef.current = currentUserId;
+  }, [currentUserId]);
 
   useEffect(() => {
     linesRef.current = lines;
@@ -184,6 +221,16 @@ export function useReadMessageHistory(
     () => unreadCountFromLines(lines, lastRead),
     [lines, lastRead]
   );
+
+  /** Unread messages exist above the loaded window (pagination / initial WS batch). */
+  const hasUnreadBeyondLoaded = useMemo(() => {
+    if (lastRead == null) return false;
+    const min = minLoadedNumericId(lines);
+    return min != null && min > lastRead + 1;
+  }, [lines, lastRead]);
+
+  /** Badge “N+” when we know there are more unreads than fit in `lines`. */
+  const unreadBadgeAtLeast = hasUnreadBeyondLoaded && hasMoreOlder;
 
   /* eslint-disable react-hooks/set-state-in-effect -- batch divider anchor on unread 0→N transitions */
   useLayoutEffect(() => {
@@ -240,7 +287,7 @@ export function useReadMessageHistory(
       if (immediate) {
         lastPostAtRef.current = Date.now();
       }
-      writeCachedLastRead(chatId, id);
+      writeCachedLastRead(chatId, userIdRef.current, id);
     },
     [enabled]
   );
@@ -335,10 +382,11 @@ export function useReadMessageHistory(
     scrollPatchEnabledRef.current = false;
     setDividerBatchStartMessageId(null);
     prevUnreadCountRef.current = 0;
+    readCursorIoGateUntilRef.current = 0;
     /* eslint-enable react-hooks/set-state-in-effect */
 
     const { chatId } = readParams;
-    const cached = readCachedLastRead(chatId);
+    const cached = readCachedLastRead(chatId, userIdRef.current);
     if (cached !== undefined) {
       setLastRead(cached);
       lastReadRef.current = cached;
@@ -355,16 +403,18 @@ export function useReadMessageHistory(
         setLastRead(lr);
         lastReadRef.current = lr;
         serverLastReadRef.current = lr;
-        writeCachedLastRead(chatId, lr);
+        writeCachedLastRead(chatId, userIdRef.current, lr);
 
         if (lr === null) {
           setInitialScrollMessageId(null);
           setNewUserScrollPatchBlocked(true);
           scrollPatchEnabledRef.current = false;
+          readCursorIoGateUntilRef.current = 0;
         } else {
           setInitialScrollMessageId(lr);
           setNewUserScrollPatchBlocked(false);
           scrollPatchEnabledRef.current = true;
+          readCursorIoGateUntilRef.current = Date.now() + 1200;
         }
         lastPostAtRef.current = Date.now();
       } catch (err) {
@@ -377,11 +427,13 @@ export function useReadMessageHistory(
             setLastRead(null);
             setInitialScrollMessageId(null);
             setNewUserScrollPatchBlocked(false);
+            readCursorIoGateUntilRef.current = 0;
             return;
           }
         }
         setFetchReady(true);
         setInitialScrollMessageId(null);
+        readCursorIoGateUntilRef.current = 0;
         toast.error("Could not load read state");
       }
     })();
@@ -398,7 +450,7 @@ export function useReadMessageHistory(
         const next = prev == null ? id : Math.max(prev, id);
         lastReadRef.current = next;
         const cid = chatIdRef.current;
-        if (cid) writeCachedLastRead(cid, next);
+        if (cid) writeCachedLastRead(cid, userIdRef.current, next);
         return next;
       });
       if (postImmediate) {
@@ -414,7 +466,7 @@ export function useReadMessageHistory(
     lastReadRef.current = lr;
     serverLastReadRef.current = lr;
     const cid = chatIdRef.current;
-    if (cid) writeCachedLastRead(cid, lr);
+    if (cid) writeCachedLastRead(cid, userIdRef.current, lr);
     if (lr === null) {
       setNewUserScrollPatchBlocked(true);
       scrollPatchEnabledRef.current = false;
@@ -439,9 +491,19 @@ export function useReadMessageHistory(
   useEffect(() => {
     const onVisibility = () => {
       const visible = document.visibilityState === "visible";
+      if (!visible) {
+        lastDocHiddenAtRef.current = Date.now();
+        prevVisibleRef.current = false;
+        return;
+      }
       const wasVisible = prevVisibleRef.current;
-      prevVisibleRef.current = visible;
-      if (!visible || wasVisible) return;
+      prevVisibleRef.current = true;
+      if (wasVisible) return;
+
+      const hiddenAt = lastDocHiddenAtRef.current;
+      const hiddenMs = hiddenAt != null ? Date.now() - hiddenAt : 0;
+      if (hiddenMs < 800) return;
+
       if (!enabled || global403Ref.current || !readStateReady) return;
 
       const lr = lastReadRef.current;
@@ -449,6 +511,11 @@ export function useReadMessageHistory(
       const first = firstUnreadLineIndex(list, lr);
       const unread = first == null ? 0 : list.length - first;
       if (unread <= 0) return;
+
+      const minL = minLoadedNumericId(list);
+      if (lr != null && minL != null && minL > lr + 1) {
+        return;
+      }
 
       void markAllReadRemote().catch((err) => {
         if (axios.isAxiosError(err) && err.response?.status === 403) {
@@ -462,32 +529,8 @@ export function useReadMessageHistory(
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [enabled, readStateReady, markAllReadRemote]);
 
-  /** Own lines always advance read cursor (treb block 10: own send is read; uses POST cursor, not mark-all). */
-  useEffect(() => {
-    if (!readStateReady || !enabled) return;
-    let maxOwn: number | null = null;
-    for (const l of lines) {
-      if (!isOwnLine(l, currentUserId)) continue;
-      const n = numericMessageId(l.id);
-      if (!Number.isFinite(n)) continue;
-      maxOwn = maxOwn == null ? n : Math.max(maxOwn, n);
-    }
-    if (maxOwn == null) return;
-    const cur = lastReadRef.current;
-    if (cur != null && maxOwn <= cur) return;
-    if (cur == null || maxOwn > cur) {
-      setLastRead((prev) => {
-        const next = prev == null ? maxOwn! : Math.max(prev, maxOwn!);
-        lastReadRef.current = next;
-        const cid = chatIdRef.current;
-        if (cid) writeCachedLastRead(cid, next);
-        return next;
-      });
-      schedulePost(maxOwn, true);
-    }
-  }, [lines, readStateReady, enabled, currentUserId, schedulePost]);
-
   const onLeftBottom = useCallback(() => {
+    readCursorIoGateUntilRef.current = 0;
     if (newUserScrollPatchBlocked) {
       scrollPatchEnabledRef.current = true;
       setNewUserScrollPatchBlocked(false);
@@ -498,6 +541,17 @@ export function useReadMessageHistory(
     (messageId: number) => {
       if (!enabled || global403Ref.current) return;
       if (!Number.isFinite(messageId)) return;
+      if (Date.now() < readCursorIoGateUntilRef.current) return;
+
+      const lr0 = lastReadRef.current;
+      const min0 = minLoadedNumericId(linesRef.current);
+      if (
+        lr0 != null &&
+        min0 != null &&
+        min0 > lr0 + 1
+      ) {
+        return;
+      }
 
       const cur = lastReadRef.current;
       if (cur != null && messageId <= cur) return;
@@ -510,7 +564,7 @@ export function useReadMessageHistory(
         const next = prev == null ? messageId : Math.max(prev, messageId);
         lastReadRef.current = next;
         const cid = chatIdRef.current;
-        if (cid) writeCachedLastRead(cid, next);
+        if (cid) writeCachedLastRead(cid, userIdRef.current, next);
         return next;
       });
       schedulePost(messageId, false);
@@ -546,6 +600,10 @@ export function useReadMessageHistory(
       }
 
       if (tabVisible) {
+        if (Date.now() < readCursorIoGateUntilRef.current) return;
+        const lr0 = lastReadRef.current;
+        const min0 = minLoadedNumericId(linesRef.current);
+        if (lr0 != null && min0 != null && min0 > lr0 + 1) return;
         bumpLastRead(id, true);
       }
     },
@@ -563,6 +621,7 @@ export function useReadMessageHistory(
       loaded: readStateReady,
       lastReadMessageId: lastRead,
       unreadCount,
+      unreadBadgeAtLeast,
       unreadDividerBeforeIndex,
       initialScrollMessageId,
       newUserScrollPatchBlocked,
@@ -576,6 +635,7 @@ export function useReadMessageHistory(
       readStateReady,
       lastRead,
       unreadCount,
+      unreadBadgeAtLeast,
       unreadDividerBeforeIndex,
       initialScrollMessageId,
       newUserScrollPatchBlocked,

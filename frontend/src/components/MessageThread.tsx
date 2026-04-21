@@ -51,6 +51,8 @@ type Props = {
   /** List index: render “New messages” divider immediately before this row (treb block 4). */
   unreadDividerBeforeIndex?: number | null;
   jumpToLatestUnreadCount?: number;
+  /** When true, append “+” to the unread badge (more unreads exist above the loaded window). */
+  jumpToLatestUnreadAtLeast?: boolean;
   /** After smooth scroll-to-latest while unread > 0: mark-all-read (treb block 5). */
   onJumpToNewestMarkRead?: () => void;
   /** User scrolled away from the bottom (enables read POST for “new user” guard). */
@@ -103,6 +105,7 @@ export function MessageThread({
   onReadVisibleMessage,
   unreadDividerBeforeIndex = null,
   jumpToLatestUnreadCount = 0,
+  jumpToLatestUnreadAtLeast = false,
   onJumpToNewestMarkRead,
   onThreadLeftBottom,
   hasMoreOlder = false,
@@ -547,7 +550,9 @@ export function MessageThread({
           type="button"
           aria-label={
             jumpToLatestUnreadCount > 0
-              ? `Scroll to latest messages, ${jumpToLatestUnreadCount} unread`
+              ? jumpToLatestUnreadAtLeast
+                ? `Scroll to latest messages, at least ${jumpToLatestUnreadCount} unread`
+                : `Scroll to latest messages, ${jumpToLatestUnreadCount} unread`
               : "Scroll to latest messages"
           }
           className="absolute bottom-3 right-4 z-10 flex h-10 min-w-10 items-center justify-center gap-0.5 rounded-full border border-slate-600 bg-slate-800/95 px-1.5 text-slate-200 shadow-lg backdrop-blur-sm transition hover:bg-slate-700 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
@@ -555,7 +560,9 @@ export function MessageThread({
         >
           {jumpToLatestUnreadCount > 0 && (
             <span className="min-w-[1.1rem] text-center text-[11px] font-semibold tabular-nums text-sky-300">
-              {jumpToLatestUnreadCount > 99 ? "99+" : jumpToLatestUnreadCount}
+              {jumpToLatestUnreadCount > 99
+                ? "99+"
+                : `${jumpToLatestUnreadCount}${jumpToLatestUnreadAtLeast ? "+" : ""}`}
             </span>
           )}
           <ChevronDown className="h-5 w-5 shrink-0" aria-hidden />

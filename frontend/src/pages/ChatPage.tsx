@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import axios from "axios";
 import { toast } from "sonner";
 import { ChatHeader } from "../components/ChatHeader";
 import { ConversationsModal } from "../components/ConversationsModal";
@@ -29,6 +30,7 @@ import {
   type BanDuration,
 } from "../lib/api";
 import { isRichTextEmpty } from "../lib/richText";
+import { numericMessageId } from "../lib/messageId";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
 import { isAdmin, isModerator, isPublicRoomBanned } from "../lib/roles";
 import { useAuthStore } from "../store/authStore";
@@ -248,10 +250,19 @@ export function ChatPage() {
     [permanentGlobalBan, mode, peerId, privateLines, globalLines]
   );
 
+  const oldestLoadedLineId = lines.length > 0 ? lines[0]!.id : null;
+
   const readEnabled =
     Boolean(accessToken && user) &&
     !(permanentGlobalBan && mode === "global") &&
     !(mode === "private" && peerId == null);
+
+  const hasMoreOlder =
+    mode === "private" && peerId != null
+      ? privateHasMoreOlder
+      : mode === "global" && !permanentGlobalBan
+        ? globalHasMoreOlder && globalHistoryReady
+        : false;
 
   const read = useReadMessageHistory({
     mode,
@@ -259,6 +270,7 @@ export function ChatPage() {
     lines,
     currentUserId: user?.id,
     enabled: readEnabled,
+    hasMoreOlder,
   });
 
   const lastSeenTailIdRef = useRef<string | number | null>(null);
@@ -724,12 +736,104 @@ export function ChatPage() {
     mergeGlobalLines,
   ]);
 
-  const hasMoreOlder =
-    mode === "private" && peerId != null
-      ? privateHasMoreOlder
-      : mode === "global" && !permanentGlobalBan
-        ? globalHasMoreOlder && globalHistoryReady
-        : false;
+  const loadOlderMessagesRef = useRef(loadOlderMessages);
+  loadOlderMessagesRef.current = loadOlderMessages;
+  const globalHasMoreRef = useRef(globalHasMoreOlder);
+  globalHasMoreRef.current = globalHasMoreOlder;
+  const privateHasMoreRef = useRef(privateHasMoreOlder);
+  privateHasMoreRef.current = privateHasMoreOlder;
+
+  /** Bridge WS tail + read cursor when the oldest loaded id is still newer than `last_read+1`. */
+  useEffect(() => {
+    if (!read.loaded || read.lastReadMessageId == null) return;
+    if (oldestLoadedLineId == null) return;
+    const lr = read.lastReadMessageId;
+    const oldest = numericMessageId(oldestLoadedLineId);
+    if (!Number.isFinite(oldest) || !Number.isFinite(lr)) return;
+    if (oldest <= lr + 1) return;
+    if (!hasMoreOlder) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (mode === "global" && permanentGlobalBan) return;
+      if (mode === "private" && (peerId == null || !user)) return;
+
+      if (mode === "global") {
+        try {
+          const { data } = await api.get<unknown[]>("/api/messages/global/context", {
+            params: { message_id: lr, before: 3, after: 500 },
+          });
+          if (cancelled) return;
+          const mapped = data.map((raw) =>
+            globalPayloadToLine(raw as Record<string, unknown>, user?.id)
+          );
+          mergeGlobalLines(mapped);
+        } catch (e) {
+          if (cancelled) return;
+          if (!axios.isAxiosError(e) || e.response?.status !== 404) {
+            return;
+          }
+        }
+        for (let i = 0; i < 60; i++) {
+          if (cancelled) return;
+          const gl = useChatStore.getState().globalLines;
+          if (gl.length === 0) return;
+          const o = numericMessageId(gl[0]!.id);
+          if (!Number.isFinite(o) || o <= lr + 1) return;
+          if (!globalHasMoreRef.current) return;
+          await loadOlderMessagesRef.current();
+        }
+        return;
+      }
+
+      if (mode === "private" && peerId != null && user) {
+        try {
+          const { data } = await api.get<unknown[]>(
+            `/api/private/messages/${peerId}/context`,
+            { params: { message_id: lr, before: 3, after: 500 } }
+          );
+          if (cancelled) return;
+          const peerLabel = peerName ?? "…";
+          const mapped: ChatLine[] = data.map((m) =>
+            privateApiToLine(m as PrivateMsgApi, user.id, peerLabel)
+          );
+          mergePrivateLines(peerId, mapped);
+        } catch (e) {
+          if (cancelled) return;
+          if (!axios.isAxiosError(e) || e.response?.status !== 404) {
+            return;
+          }
+        }
+        for (let j = 0; j < 60; j++) {
+          if (cancelled) return;
+          const pl = useChatStore.getState().privateLines[peerId] ?? [];
+          if (pl.length === 0) return;
+          const o = numericMessageId(pl[0]!.id);
+          if (!Number.isFinite(o) || o <= lr + 1) return;
+          if (!privateHasMoreRef.current) return;
+          await loadOlderMessagesRef.current();
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    read.loaded,
+    read.lastReadMessageId,
+    oldestLoadedLineId,
+    hasMoreOlder,
+    mode,
+    peerId,
+    permanentGlobalBan,
+    user,
+    peerName,
+    mergeGlobalLines,
+    mergePrivateLines,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -809,6 +913,7 @@ export function ChatPage() {
             onReadVisibleMessage={read.onVisibleReadCandidate}
             unreadDividerBeforeIndex={read.unreadDividerBeforeIndex}
             jumpToLatestUnreadCount={read.unreadCount}
+            jumpToLatestUnreadAtLeast={read.unreadBadgeAtLeast}
             onJumpToNewestMarkRead={read.onJumpToNewest}
             onThreadLeftBottom={read.onLeftBottom}
             hasMoreOlder={hasMoreOlder}
