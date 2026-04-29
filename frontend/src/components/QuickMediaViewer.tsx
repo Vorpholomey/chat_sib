@@ -8,6 +8,9 @@ export type QuickMediaItem = {
   kind: "image" | "gif" | "video" | "audio";
   src: string;
   fileName?: string;
+  audioTitle?: string;
+  audioArtist?: string;
+  audioCoverUrl?: string;
 };
 
 type Props = {
@@ -48,7 +51,8 @@ export function QuickMediaViewer({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const mediaPlaybackRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const touchStartXRef = useRef<number | null>(null);
   const allowSwipeRef = useRef(true);
   // Prevents iOS/Android click-after-touch from immediately closing the modal
@@ -108,7 +112,7 @@ export function QuickMediaViewer({
 
   useEffect(() => {
     if (!item || (item.kind !== "video" && item.kind !== "audio")) return;
-    const mediaEl = mediaPlaybackRef.current;
+    const mediaEl = item.kind === "video" ? videoRef.current : audioRef.current;
     if (!mediaEl) return;
     const maybePromise = mediaEl.play();
     if (maybePromise && typeof maybePromise.catch === "function") {
@@ -317,7 +321,7 @@ export function QuickMediaViewer({
               </div>
             ) : item.kind === "video" ? (
               <video
-                ref={mediaPlaybackRef}
+                ref={videoRef}
                 src={item.src}
                 autoPlay
                 controls
@@ -332,11 +336,26 @@ export function QuickMediaViewer({
             ) : (
               <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-900/80 p-6 text-slate-100">
                 <div className="mb-4 flex items-center gap-3">
-                  <div className="h-14 w-14 rounded-lg bg-slate-700/80" aria-hidden />
-                  <div className="text-sm text-slate-300">{item.fileName ?? "Audio file"}</div>
+                  {item.audioCoverUrl ? (
+                    <img
+                      src={item.audioCoverUrl}
+                      alt=""
+                      className="h-14 w-14 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="h-14 w-14 rounded-lg bg-slate-700/80" aria-hidden />
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-slate-200">
+                      {item.audioTitle ?? item.fileName ?? "Audio file"}
+                    </div>
+                    {item.audioArtist && (
+                      <div className="truncate text-xs text-slate-400">{item.audioArtist}</div>
+                    )}
+                  </div>
                 </div>
                 <audio
-                  ref={mediaPlaybackRef}
+                  ref={audioRef}
                   src={item.src}
                   autoPlay
                   controls

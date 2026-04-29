@@ -30,6 +30,7 @@ import {
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
+import { parseAudioMetaFromUrl } from "../lib/audioMeta";
 import { assetUrl } from "../lib/config";
 import { isRichTextEmpty } from "../lib/richText";
 import { numericMessageId } from "../lib/messageId";
@@ -278,12 +279,24 @@ export function ChatPage() {
           line.contentType === "video" ||
           line.contentType === "audio"
         )
-        .map((line) => ({
-          id: line.id,
-          kind: line.contentType,
-          src: assetUrl(line.body),
-          fileName: typeof line.body === "string" ? mediaFileNameFromUrl(line.body) : undefined,
-        }))
+        .map((line) => {
+          const src = assetUrl(line.body);
+          const fileName =
+            typeof line.body === "string" ? mediaFileNameFromUrl(line.body) : undefined;
+          if (line.contentType !== "audio" || typeof line.body !== "string") {
+            return { id: line.id, kind: line.contentType, src, fileName };
+          }
+          const meta = parseAudioMetaFromUrl(src);
+          return {
+            id: line.id,
+            kind: line.contentType,
+            src,
+            fileName: meta.fileName ?? fileName,
+            audioTitle: meta.title ?? meta.fileName,
+            audioArtist: meta.artist,
+            audioCoverUrl: meta.coverUrl,
+          };
+        })
         .filter((item) => Boolean(item.src)),
     [lines]
   );

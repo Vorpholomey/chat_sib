@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { Music2, Pin, PlayCircle } from "lucide-react";
+import { parseAudioMetaFromUrl } from "../lib/audioMeta";
 import { assetUrl } from "../lib/config";
 import { numericMessageId } from "../lib/messageId";
 import { textForMessageSearch } from "../lib/messageSearch";
@@ -19,20 +20,6 @@ import { MessageReactionChips, ReactionPickerControl } from "./MessageReactions"
 import { MessageRichText } from "./MessageRichText";
 import { ReplyQuotePreview } from "./ReplyQuotePreview";
 import { RoleBadge } from "./RoleBadge";
-
-function mediaFileLabel(src: string): string {
-  try {
-    const parsed = new URL(src, window.location.origin);
-    const tagged = parsed.searchParams.get("name")?.trim();
-    if (tagged) return tagged;
-    const base = parsed.pathname.split("/").pop();
-    return base ? decodeURIComponent(base) : "Audio attachment";
-  } catch {
-    const noQuery = src.split("?")[0] ?? src;
-    const base = noQuery.split("/").pop();
-    return base ? decodeURIComponent(base) : "Audio attachment";
-  }
-}
 
 function lineMatchesSearchQuery(body: string, q: string): boolean {
   const t = q.trim();
@@ -164,10 +151,10 @@ function MessageLineRowInner({
     lineMatchesSearchQuery(line.caption!, searchHighlightQuery!);
 
   const mediaSrc = line.contentType !== "text" ? assetUrl(line.body) : "";
-  const audioLabel =
-    line.contentType === "audio" && mediaSrc
-      ? mediaFileLabel(mediaSrc)
-      : "Audio attachment";
+  const audioMeta =
+    line.contentType === "audio" && mediaSrc ? parseAudioMetaFromUrl(mediaSrc) : {};
+  const audioTitle = audioMeta.title || audioMeta.fileName || "Audio attachment";
+  const audioArtist = audioMeta.artist;
 
   const rowRef = useRef<HTMLLIElement>(null);
 
@@ -348,10 +335,25 @@ function MessageLineRowInner({
                     )}
                     {line.contentType === "audio" && (
                       <div className="flex min-w-[220px] items-center gap-3 rounded border border-slate-700 bg-slate-800/80 px-3 py-2 text-left">
-                        <span className="rounded-md bg-slate-700 p-2">
-                          <Music2 className="h-5 w-5 text-slate-200" />
+                        {audioMeta.coverUrl ? (
+                          <img
+                            src={audioMeta.coverUrl}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            className="h-10 w-10 rounded object-cover"
+                          />
+                        ) : (
+                          <span className="rounded-md bg-slate-700 p-2">
+                            <Music2 className="h-5 w-5 text-slate-200" />
+                          </span>
+                        )}
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm text-slate-200">{audioTitle}</span>
+                          {audioArtist && (
+                            <span className="block truncate text-xs text-slate-400">{audioArtist}</span>
+                          )}
                         </span>
-                        <span className="text-sm text-slate-300">{audioLabel}</span>
                       </div>
                     )}
                   </button>
