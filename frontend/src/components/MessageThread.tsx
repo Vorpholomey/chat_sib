@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { Ban, ChevronDown, Loader2, Pencil, Pin, Reply, Trash2 } from "lucide-react";
@@ -15,6 +16,8 @@ import type { ChatLine, ChatMode } from "../types/chat";
 import type { ReactionKind } from "../types/reactions";
 import type { UserRole } from "../types/user";
 import { MessageLineRow } from "./MessageLineRow";
+
+type ReadControl = { loaded: boolean; anchorMessageId: string | number | null };
 
 type Props = {
   lines: ChatLine[];
@@ -38,6 +41,22 @@ type Props = {
   searchHighlightQuery?: string | null;
   /** Incremented (e.g. after login) to scroll to the newest message once lines are available. */
   scrollToBottomNonce?: number;
+  /**
+   * When set, defers the default “first paint scroll to bottom” until `loaded`, then scrolls
+   * to `anchorMessageId` (center) or bottom when `anchorMessageId` is null (treb block 2).
+   */
+  readControl?: ReadControl;
+  readTrackEnabled?: boolean;
+  onReadVisibleMessage?: (messageId: number) => void;
+  /** List index: render “New messages” divider immediately before this row (treb block 4). */
+  unreadDividerBeforeIndex?: number | null;
+  jumpToLatestUnreadCount?: number;
+  /** When true, append “+” to the unread badge (more unreads exist above the loaded window). */
+  jumpToLatestUnreadAtLeast?: boolean;
+  /** After smooth scroll-to-latest while unread > 0: mark-all-read (treb block 5). */
+  onJumpToNewestMarkRead?: () => void;
+  /** User scrolled away from the bottom (enables read POST for “new user” guard). */
+  onThreadLeftBottom?: () => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => Promise<void>;
@@ -81,6 +100,14 @@ export function MessageThread({
   searchActiveMessageId = null,
   searchHighlightQuery = null,
   scrollToBottomNonce = 0,
+  readControl,
+  readTrackEnabled = false,
+  onReadVisibleMessage,
+  unreadDividerBeforeIndex = null,
+  jumpToLatestUnreadCount = 0,
+  jumpToLatestUnreadAtLeast = false,
+  onJumpToNewestMarkRead,
+  onThreadLeftBottom,
   hasMoreOlder = false,
   loadingOlder = false,
   onLoadOlder,
@@ -113,6 +140,8 @@ export function MessageThread({
     null
   );
   const loadOlderInFlightRef = useRef(false);
+  const prevAtBottomRef = useRef(true);
+  const initialReadScrollAppliedRef = useRef(false);
 
   const updateScrollPinnedState = useCallback(() => {
     const el = threadRef.current;
@@ -120,9 +149,19 @@ export function MessageThread({
     const thresholdPx = 80;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const atBottom = distanceFromBottom <= thresholdPx;
+    if (
+      (!readControl || readControl.loaded) &&
+      prevAtBottomRef.current &&
+      !atBottom
+    ) {
+      onThreadLeftBottom?.();
+    }
+    prevAtBottomRef.current = atBottom;
     atBottomRef.current = atBottom;
-    setShowScrollToBottom(!atBottom && lines.length > 0);
-  }, [lines.length]);
+    const showBtn =
+      lines.length > 0 && (!atBottom || jumpToLatestUnreadCount > 0);
+    setShowScrollToBottom(showBtn);
+  }, [lines.length, jumpToLatestUnreadCount, onThreadLeftBottom, readControl]);
 
   const pinnedSet = useMemo(() => {
     if (!pinnedMessageIds?.length) return new Set<string>();
@@ -151,20 +190,72 @@ export function MessageThread({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuId, openLine?.id]);
 
+  useLayoutEffect(() => {
+    if (!readControl) return;
+    if (!readControl.loaded) {
+      initialReadScrollAppliedRef.current = false;
+    }
+  }, [readControl]);
+
+  /** Initial scroll from server read anchor (treb block 2). */
+  useLayoutEffect(() => {
+    if (!readControl?.loaded) return;
+    if (lines.length === 0) return;
+    if (initialReadScrollAppliedRef.current) return;
+    initialReadScrollAppliedRef.current = true;
+
+    const anchor = readControl.anchorMessageId;
+    const lastId = lines[lines.length - 1]!.id;
+    if (anchor == null) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      prevLastLineIdRef.current = lastId;
+      atBottomRef.current = true;
+      prevAtBottomRef.current = true;
+      setShowScrollToBottom(false);
+      updateScrollPinnedState();
+      return;
+    }
+    const el = threadRef.current?.querySelector<HTMLElement>(
+      `[data-chat-message-id="${String(anchor)}"]`
+    );
+    if (el) {
+      el.scrollIntoView({ behavior: "auto", block: "center" });
+      prevLastLineIdRef.current = lastId;
+      atBottomRef.current = false;
+      prevAtBottomRef.current = false;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      prevLastLineIdRef.current = lastId;
+      atBottomRef.current = true;
+      prevAtBottomRef.current = true;
+      setShowScrollToBottom(false);
+    }
+    updateScrollPinnedState();
+  }, [readControl, lines, updateScrollPinnedState]);
+
   /** New lines increase scrollHeight before scrollTop moves; measuring "at bottom" before scrolling falsely clears stickiness. Read stickiness first, scroll, then measure. */
   useLayoutEffect(() => {
     if (lines.length === 0) {
       prevLastLineIdRef.current = null;
       atBottomRef.current = true;
+      prevAtBottomRef.current = true;
       setShowScrollToBottom(false);
       return;
     }
     const lastId = lines[lines.length - 1]!.id;
     if (prevLastLineIdRef.current === null) {
       prevLastLineIdRef.current = lastId;
-      bottomRef.current?.scrollIntoView({ behavior: "auto" });
-      atBottomRef.current = true;
-      setShowScrollToBottom(false);
+      const deferBottom = readControl && !readControl.loaded;
+      if (!deferBottom) {
+        bottomRef.current?.scrollIntoView({ behavior: "auto" });
+        atBottomRef.current = true;
+        prevAtBottomRef.current = true;
+        setShowScrollToBottom(false);
+      } else {
+        atBottomRef.current = false;
+        prevAtBottomRef.current = false;
+        setShowScrollToBottom(lines.length > 0);
+      }
       updateScrollPinnedState();
       return;
     }
@@ -178,7 +269,7 @@ export function MessageThread({
       }
     }
     updateScrollPinnedState();
-  }, [lines, updateScrollPinnedState]);
+  }, [lines, updateScrollPinnedState, readControl]);
 
   useLayoutEffect(() => {
     const snap = scrollRestoreSnapRef.current;
@@ -207,8 +298,16 @@ export function MessageThread({
   const scrollThreadToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     atBottomRef.current = true;
+    prevAtBottomRef.current = true;
     setShowScrollToBottom(false);
   }, []);
+
+  const handleJumpToLatestClick = useCallback(() => {
+    scrollThreadToBottom();
+    if (jumpToLatestUnreadCount > 0) {
+      onJumpToNewestMarkRead?.();
+    }
+  }, [scrollThreadToBottom, jumpToLatestUnreadCount, onJumpToNewestMarkRead]);
 
   const handleThreadScroll = useCallback(() => {
     updateScrollPinnedState();
@@ -380,32 +479,56 @@ export function MessageThread({
           <p className="m-auto text-center text-sm text-slate-500">{emptyHint}</p>
         ) : (
           <ul className="pr-1">
-            {lines.map((line) => (
-              <MessageLineRow
-                key={lineKey(line)}
-                line={line}
-                currentUserId={currentUserId}
-                globalRoomBanned={globalRoomBanned}
-                isModerator={isModerator}
-                isAdmin={isAdmin}
-                canMod={canMod}
-                isGlobal={isGlobal}
-                pinnedSet={pinnedSet}
-                highlightMessageId={highlightMessageId}
-                searchActiveMessageId={searchActiveMessageId}
-                searchHighlightQuery={searchHighlightQuery}
-                threadRef={threadRef}
-                onContextMenu={openContextMenu}
-                onReply={onReply}
-                onEditOwn={onEditOwn}
-                onDeleteOwn={onDeleteOwn}
-                onPin={onPin}
-                onBanFromMessage={onBanFromMessage}
-                onReactionToggle={onReactionToggle}
-                onOpenPrivateChat={onOpenPrivateChat}
-                onJumpToMessage={onJumpToMessage}
-              />
-            ))}
+            {lines.flatMap((line, index) => {
+              const nodes: ReactNode[] = [];
+              if (
+                unreadDividerBeforeIndex != null &&
+                index === unreadDividerBeforeIndex
+              ) {
+                nodes.push(
+                  <li
+                    key={`new-msgs-divider-${String(line.id)}`}
+                    className="sticky top-0 z-[5] mb-3 list-none bg-slate-900/95 py-1 backdrop-blur-sm"
+                    aria-hidden
+                  >
+                    <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-sky-400/90">
+                      <span className="h-px flex-1 bg-sky-500/40" />
+                      New messages
+                      <span className="h-px flex-1 bg-sky-500/40" />
+                    </div>
+                  </li>
+                );
+              }
+              nodes.push(
+                <MessageLineRow
+                  key={lineKey(line)}
+                  line={line}
+                  currentUserId={currentUserId}
+                  globalRoomBanned={globalRoomBanned}
+                  isModerator={isModerator}
+                  isAdmin={isAdmin}
+                  canMod={canMod}
+                  isGlobal={isGlobal}
+                  pinnedSet={pinnedSet}
+                  highlightMessageId={highlightMessageId}
+                  searchActiveMessageId={searchActiveMessageId}
+                  searchHighlightQuery={searchHighlightQuery}
+                  threadRef={threadRef}
+                  readTrackEnabled={readTrackEnabled}
+                  onReadVisibleMessage={onReadVisibleMessage}
+                  onContextMenu={openContextMenu}
+                  onReply={onReply}
+                  onEditOwn={onEditOwn}
+                  onDeleteOwn={onDeleteOwn}
+                  onPin={onPin}
+                  onBanFromMessage={onBanFromMessage}
+                  onReactionToggle={onReactionToggle}
+                  onOpenPrivateChat={onOpenPrivateChat}
+                  onJumpToMessage={onJumpToMessage}
+                />
+              );
+              return nodes;
+            })}
           </ul>
         )}
         <div ref={bottomRef} />
@@ -425,11 +548,24 @@ export function MessageThread({
       {showScrollToBottom && (
         <button
           type="button"
-          aria-label="Scroll to latest messages"
-          className="absolute bottom-3 right-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-600 bg-slate-800/95 text-slate-200 shadow-lg backdrop-blur-sm transition hover:bg-slate-700 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-          onClick={scrollThreadToBottom}
+          aria-label={
+            jumpToLatestUnreadCount > 0
+              ? jumpToLatestUnreadAtLeast
+                ? `Scroll to latest messages, at least ${jumpToLatestUnreadCount} unread`
+                : `Scroll to latest messages, ${jumpToLatestUnreadCount} unread`
+              : "Scroll to latest messages"
+          }
+          className="absolute bottom-3 right-4 z-10 flex h-10 min-w-10 items-center justify-center gap-0.5 rounded-full border border-slate-600 bg-slate-800/95 px-1.5 text-slate-200 shadow-lg backdrop-blur-sm transition hover:bg-slate-700 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          onClick={handleJumpToLatestClick}
         >
-          <ChevronDown className="h-5 w-5" aria-hidden />
+          {jumpToLatestUnreadCount > 0 && (
+            <span className="min-w-[1.1rem] text-center text-[11px] font-semibold tabular-nums text-sky-300">
+              {jumpToLatestUnreadCount > 99
+                ? "99+"
+                : `${jumpToLatestUnreadCount}${jumpToLatestUnreadAtLeast ? "+" : ""}`}
+            </span>
+          )}
+          <ChevronDown className="h-5 w-5 shrink-0" aria-hidden />
         </button>
       )}
 

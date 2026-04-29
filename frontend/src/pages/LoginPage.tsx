@@ -73,8 +73,15 @@ export function LoginPage() {
           />
         </div>
         <div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <label className="block text-xs text-slate-400">Password</label>
+          <label className="mb-1 block text-xs text-slate-400">Password</label>
+          <input
+            type="password"
+            required
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-base"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <div className="mt-1 flex justify-end">
             <button
               type="button"
               className="text-xs text-violet-400 hover:underline"
@@ -86,13 +93,6 @@ export function LoginPage() {
               Forgot password?
             </button>
           </div>
-          <input
-            type="password"
-            required
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-base"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
         </div>
         <button
           type="submit"
