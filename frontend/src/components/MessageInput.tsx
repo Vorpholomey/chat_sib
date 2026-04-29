@@ -36,10 +36,13 @@ export function MessageInput({
   onCancelEdit,
   onSubmitEdit,
 }: Props) {
+  type MediaKind = Extract<ContentType, "image" | "gif" | "video" | "audio">;
+
   const richRef = useRef<RichTextEditorHandle>(null);
   const [draftHtml, setDraftHtml] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewKind, setPreviewKind] = useState<MediaKind | null>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const emojiAnchorRef = useRef<HTMLDivElement>(null);
@@ -53,7 +56,10 @@ export function MessageInput({
   const editingMedia =
     isEditing &&
     editingLine &&
-    (editingLine.contentType === "image" || editingLine.contentType === "gif");
+    (editingLine.contentType === "image" ||
+      editingLine.contentType === "gif" ||
+      editingLine.contentType === "video" ||
+      editingLine.contentType === "audio");
 
   useEffect(() => {
     if (!emojiPickerOpen) return;
@@ -69,9 +75,25 @@ export function MessageInput({
     richRef.current?.insertText(emoji);
   };
 
-  const uploadAndSend = async (file: File) => {
+  const resolveMediaKind = (file: File): MediaKind | null => {
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-    const isGif = ext === "gif";
+    if (ext === "gif") return "gif";
+    if (file.type.startsWith("video/")) return "video";
+    if (file.type.startsWith("audio/")) return "audio";
+    if (file.type.startsWith("image/")) return "image";
+    // Fallback for cases where browser mime types are missing/odd.
+    if (["mp4", "webm"].includes(ext)) return "video";
+    if (["mp3", "wav"].includes(ext)) return "audio";
+    if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) return "image";
+    return null;
+  };
+
+  const uploadAndSend = async (file: File) => {
+    const kind = resolveMediaKind(file);
+    if (!kind) {
+      toast.error("Please choose a supported media file");
+      return;
+    }
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -81,13 +103,14 @@ export function MessageInput({
       const cap = !isRichTextEmpty(captionHtml) ? captionHtml : undefined;
       onSendText(
         full,
-        isGif ? "gif" : "image",
+        kind,
         replyTo?.id != null ? Number(replyTo.id) : undefined,
         cap
       );
       richRef.current?.clear();
       setPreview(null);
       setPreviewFile(null);
+      setPreviewKind(null);
       setDraftHtml("");
       onClearReply?.();
     } catch {
@@ -97,11 +120,13 @@ export function MessageInput({
 
   const onPickFile = (f: File | null) => {
     if (!f) return;
-    if (!f.type.startsWith("image/")) {
-      toast.error("Please choose an image file");
+    const kind = resolveMediaKind(f);
+    if (!kind) {
+      toast.error("Please choose an image, video, gif, or audio file");
       return;
     }
     setPreviewFile(f);
+    setPreviewKind(kind);
     setPreview(URL.createObjectURL(f));
   };
 
@@ -112,7 +137,7 @@ export function MessageInput({
   };
 
   const submit = async () => {
-    if (preview && previewFile) {
+    if (preview && previewFile && previewKind) {
       await uploadAndSend(previewFile);
       return;
     }
@@ -160,7 +185,7 @@ export function MessageInput({
       {isEditing && editingLine && (
         <div className="flex items-center justify-between gap-2 rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
           <span>
-            {editingMedia ? "Editing image message (caption)" : "Editing message"}
+            {editingMedia ? "Editing media (caption)" : "Editing message"}
           </span>
           <button
             type="button"
@@ -175,20 +200,46 @@ export function MessageInput({
       )}
       {editingMedia && editingLine && (
         <div className="flex items-start gap-3 rounded border border-slate-700 bg-slate-900/80 p-2">
-          <img
-            src={assetUrl(editingLine.body)}
-            alt=""
-            className="h-20 w-20 shrink-0 rounded border border-slate-700 object-cover"
-          />
+          {editingLine.contentType === "image" || editingLine.contentType === "gif" ? (
+            <img
+              src={assetUrl(editingLine.body)}
+              alt=""
+              className="h-20 w-20 shrink-0 rounded border border-slate-700 object-cover"
+            />
+          ) : editingLine.contentType === "video" ? (
+            <video
+              src={assetUrl(editingLine.body)}
+              muted
+              preload="metadata"
+              className="h-20 w-20 shrink-0 rounded border border-slate-700 object-cover"
+            />
+          ) : (
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-800/60 text-xs text-slate-300">
+              Audio
+            </div>
+          )}
           <p className="pt-0.5 text-xs leading-snug text-slate-500">
-            You can change the caption below. To replace the image, delete this message and send a
+            You can change the caption below. To replace the media, delete this message and send a
             new one.
           </p>
         </div>
       )}
       {preview && (
         <div className="flex items-start gap-2 rounded border border-slate-700 bg-slate-900/80 p-2">
-          <img src={preview} alt="" className="h-20 w-20 shrink-0 rounded object-cover" />
+          {previewKind === "image" || previewKind === "gif" ? (
+            <img src={preview} alt="" className="h-20 w-20 shrink-0 rounded object-cover" />
+          ) : previewKind === "video" ? (
+            <video
+              src={preview}
+              muted
+              preload="metadata"
+              className="h-20 w-20 shrink-0 rounded border border-slate-700 object-cover"
+            />
+          ) : (
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-800/60 text-xs text-slate-300">
+              Audio
+            </div>
+          )}
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <button
               type="button"
@@ -196,9 +247,10 @@ export function MessageInput({
               onClick={() => {
                 setPreview(null);
                 setPreviewFile(null);
+                setPreviewKind(null);
               }}
             >
-              Remove image
+              Remove media
             </button>
             <p className="text-xs text-slate-500">
               Type an optional caption in the box below, then send.
@@ -209,7 +261,7 @@ export function MessageInput({
               className="self-start rounded bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
               onClick={() => previewFile && uploadAndSend(previewFile)}
             >
-              Send with image
+              Send media
             </button>
           </div>
         </div>
@@ -222,7 +274,7 @@ export function MessageInput({
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*,audio/*"
           className="hidden"
           onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
         />
@@ -230,7 +282,7 @@ export function MessageInput({
           type="button"
           disabled={disabled || isEditing}
           className="h-[40px] shrink-0 self-end rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-          title="Upload image"
+          title="Upload media"
           onClick={() => fileRef.current?.click()}
         >
           <ImagePlus className="h-5 w-5" />
@@ -299,7 +351,7 @@ export function MessageInput({
         </button>
       </div>
       <p className="hidden text-xs text-slate-600 sm:block">
-        Drag & drop an image to attach (optional caption) · Shift+Enter for a new line ·
+        Drag & drop a media file to attach (optional caption) · Shift+Enter for a new line ·
         Right-click selected text to format
       </p>
     </div>

@@ -161,10 +161,7 @@ export function ReactionPickerControl({
   }, [pickerOpen, canInteract, panelAlign, boundsRef]);
 
   useEffect(() => {
-    if (!pickerOpen) {
-      setPanelFixed(null);
-      return;
-    }
+    if (!pickerOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node | null;
       if (t && rootRef.current?.contains(t)) return;

@@ -4,7 +4,7 @@ import type { UserRole } from "../types/user";
 
 function asContentType(v: unknown): ContentType {
   const ct = typeof v === "string" ? v : "text";
-  return (["text", "image", "gif"].includes(ct) ? ct : "text") as ContentType;
+  return (["text", "image", "gif", "video", "audio"].includes(ct) ? ct : "text") as ContentType;
 }
 
 function parseReplyTo(raw: unknown): ReplyRef | undefined {
