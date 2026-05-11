@@ -1,0 +1,35 @@
+---
+description: Route every task through architecture-planner, then delegate to backend-dev and/or frontend-dev
+alwaysApply: true
+---
+
+# Multi-agent workflow
+
+For **every** user task—bugs, features, refactors, investigations—follow this sequence unless the user explicitly opts out.
+
+## 1. Plan first (`architecture-planner`)
+
+Invoke the **architecture-planner** subagent (`.cursor/agents/architecture-planner.md`) **before** substantive implementation. It must:
+
+- Read `architecture.mdc` at the repo root and align the plan with it.
+- Produce a concise, ordered plan with backend vs frontend boundaries and handoffs.
+
+**Skip or shorten planning** only for trivial, strictly localized edits (e.g. typo in one file, single-line config) where architecture impact is none—still use judgment; when unsure, plan first.
+
+## 2. Delegate implementation
+
+After the plan exists, delegate execution using **backend-dev** and **frontend-dev** as appropriate:
+
+| Work belongs to | Use subagent |
+|-----------------|--------------|
+| `backend/`, APIs, DB, auth, WebSockets server, migrations, Docker/nginx affecting the API | `.cursor/agents/backend-dev.md` |
+| `frontend/`, UI, components, client state, a11y, Vite/build | `.cursor/agents/frontend-dev.md` |
+
+- **Backend-only or frontend-only tasks**: invoke the matching specialist; the plan from step 1 still applies as scope and acceptance criteria.
+- **Full-stack tasks**: run **architecture-planner** once, then delegate **backend-dev** and **frontend-dev** in dependency order (typically backend contracts/migrations before frontend wiring the UI).
+
+## 3. Orchestration rules
+
+- Do not bypass planning with ad-hoc edits across layers when the task touches architecture, contracts between tiers, or multiple directories.
+- Merge specialist outputs coherently: same naming, types, and API/event shapes the planner documented.
+- If the planner flags an architecture change, treat it explicitly (update `architecture.mdc` when the workspace rule requires it).
