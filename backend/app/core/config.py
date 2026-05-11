@@ -56,8 +56,10 @@ class Settings(BaseSettings):
 
     # Uploads
     upload_dir: Path = Path("uploads")
-    max_upload_size_mb: int = 10
+    max_upload_size_mb: int = 1024
     allowed_image_extensions: set[str] = {"png", "jpg", "jpeg", "gif", "webp"}
+    allowed_video_extensions: set[str] = {"mp4", "webm"}
+    allowed_audio_extensions: set[str] = {"mp3", "wav"}
 
     @property
     def max_upload_size_bytes(self) -> int:

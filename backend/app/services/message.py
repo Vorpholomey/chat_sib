@@ -151,14 +151,14 @@ async def search_global_message_ids(
 ) -> list[int]:
     """
     Message ids matching the query (chronological order).
-    Text: substring match on stored body (HTML). Image/gif: caption only (not file URL).
+    Text: substring match on stored body (HTML). Media: caption only (not file URL).
     """
     raw = (q or "").strip()
     if not raw:
         return []
     pattern = f"%{_escape_like_wildcards(raw)}%"
     mt_text = MessageType.text
-    mt_media = (MessageType.image, MessageType.gif)
+    mt_media = (MessageType.image, MessageType.gif, MessageType.video, MessageType.audio)
     cond = or_(
         and_(GlobalMessage.message_type == mt_text, GlobalMessage.content.ilike(pattern, escape="\\")),
         and_(
@@ -197,7 +197,7 @@ def _reply_snippet_text(
         plain = unescape(plain).strip()
         if plain:
             return plain[:500]
-    return "[image]"
+    return "[media]"
 
 
 def _reply_preview_global(msg: GlobalMessage) -> Optional[dict[str, Any]]:
@@ -336,7 +336,7 @@ async def create_global_message(
             raise ValueError("reply_to_id not found")
     if message_type == MessageType.text:
         if caption is not None and caption.strip():
-            raise ValueError("Caption is only allowed for image or gif messages")
+            raise ValueError("Caption is only allowed for media messages")
         cap: Optional[str] = None
     else:
         cap = prepare_optional_caption_html(caption)
@@ -374,7 +374,7 @@ async def create_private_message(
             raise ValueError("reply does not belong to this conversation")
     if message_type == MessageType.text:
         if caption is not None and caption.strip():
-            raise ValueError("Caption is only allowed for image or gif messages")
+            raise ValueError("Caption is only allowed for media messages")
         cap = None
     else:
         cap = prepare_optional_caption_html(caption)
@@ -822,7 +822,9 @@ async def search_private_message_ids(
     cond = or_(
         and_(PrivateMessage.message_type == mt_text, PrivateMessage.content.ilike(pattern, escape="\\")),
         and_(
-            PrivateMessage.message_type.in_((MessageType.image, MessageType.gif)),
+            PrivateMessage.message_type.in_(
+                (MessageType.image, MessageType.gif, MessageType.video, MessageType.audio)
+            ),
             PrivateMessage.caption.isnot(None),
             PrivateMessage.caption.ilike(pattern, escape="\\"),
         ),

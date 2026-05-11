@@ -17,6 +17,8 @@ class MessageType(str, enum.Enum):
     text = "text"
     image = "image"
     gif = "gif"
+    video = "video"
+    audio = "audio"
 
 
 class GlobalMessage(Base):

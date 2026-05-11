@@ -1,10 +1,7 @@
-"""FastAPI application: routes, static files, CORS."""
-
-from pathlib import Path
+"""FastAPI application: routes and CORS."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -60,12 +57,6 @@ app.include_router(read_state.router, prefix="/api")
 app.include_router(chats_read_status.router, prefix="/api")
 app.include_router(moderation.router, prefix="/api")
 app.include_router(websocket.router)
-
-# Serve uploaded files at /uploads
-upload_dir = Path(settings.upload_dir)
-upload_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(upload_dir)), name="uploads")
-
 
 @app.get("/health")
 def health():

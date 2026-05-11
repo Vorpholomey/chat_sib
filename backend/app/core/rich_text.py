@@ -41,7 +41,7 @@ def is_effectively_empty_html(html: str) -> bool:
 
 
 def prepare_optional_caption_html(raw: Optional[str]) -> Optional[str]:
-    """Sanitized HTML for optional image/gif captions; None if absent or empty."""
+    """Sanitized HTML for optional media captions; None if absent or empty."""
     if raw is None:
         return None
     s = raw.strip()
@@ -58,7 +58,7 @@ def prepare_optional_caption_html(raw: Optional[str]) -> Optional[str]:
 def prepare_stored_message_content(content: str, message_type: MessageType) -> str:
     """
     Normalize content before persistence. Text messages are HTML-sanitized;
-    image/gif bodies are treated as plain URL strings.
+    non-text media bodies are treated as plain URL strings.
     """
     if message_type != MessageType.text:
         out = content.strip()
@@ -68,7 +68,7 @@ def prepare_stored_message_content(content: str, message_type: MessageType) -> s
             raise ValueError("Message too long")
         parsed = urlparse(out)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("Image URL must be http(s) with a valid host")
+            raise ValueError("Media URL must be http(s) with a valid host")
         return out
     out = sanitize_message_html(content)
     if is_effectively_empty_html(out):

@@ -96,7 +96,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 ### 2.4 WebSocket protocol (`/ws/chat`)
 
 - One connection per authenticated user; server sends **pin state** and the **last 20 global messages** (not the full history), then **`global_history_ready`**. **Permanently banned** accounts cannot open the socket (close code `4003`). Users who must change a **temporary recovery password** cannot open the socket (close code **4403**, reason **`PASSWORD_CHANGE_REQUIRED`**). Older global messages load via **`GET /api/messages/global/history?before_id=`** when the client scrolls up.
-- Inbound JSON can target the **global room** or a **private** peer via `recipient_id`. For **image** / **gif** messages, optional **`caption`** carries the same sanitized HTML subset as text messages (stored in `caption` columns, separate from the media URL in `content`/`text`).
+- Inbound JSON can target the **global room** or a **private** peer via `recipient_id`. For **media** messages (**image** / **gif** / **video** / **audio**), optional **`caption`** carries the same sanitized HTML subset as text messages (stored in `caption` columns, separate from the media URL in `content`/`text`).
 - Outbound payloads use a `type` field (e.g. `message`, `message_updated`, `message_deleted`, `pin_changed`, `global_history_ready`) so the client can branch without guessing shapes.
 
 ### 2.5 REST surface (conceptual)
@@ -114,7 +114,7 @@ Redis is configured (`REDIS_URL`) for future use (e.g. caching or cross-process 
 ### 2.6 Data model (high level)
 
 - **User**: identity, permanent `hashed_password`, optional **temporary password** fields (`temporary_password_hash`, `is_using_temporary_password`, `temporary_password_expires_at`) for email recovery, `UserRole`, ban fields, timestamps.
-- **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented. **Image/gif** rows store the media URL in `content`; optional **`caption`** holds HTML for an accompanying message (same sanitization rules as text).
+- **GlobalMessage** / **PrivateMessage**: text/content type, sender/receiver, threading/reply metadata as modeled, soft-delete or update flags as implemented. **Media** rows (image/gif/video/audio) store the media URL in `content`; optional **`caption`** holds HTML for an accompanying message (same sanitization rules as text).
 - **GlobalReadState** / **PrivateReadState**: per-user last-read message pointer (`last_read_message_id`, nullable FK to the corresponding message table) and **`updated_at`** for sync/UX; private state is keyed by **`(user_id, peer_id)`**.
 - **ChatSettings**: singleton row for room-level settings (currently no pin column; pins live in **`global_pinned_messages`**).
 - **GlobalPinnedMessage**: one row per pinned global message (`message_id` unique, `pinned_at` updated when re-pinning); **API/WebSocket order** is by **message `created_at`** (newest first), not pin time.

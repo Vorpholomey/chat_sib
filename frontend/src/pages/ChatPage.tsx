@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ChatHeader } from "../components/ChatHeader";
 import { ConversationsModal } from "../components/ConversationsModal";
 import { MessageInput } from "../components/MessageInput";
+import { QuickMediaViewer, type QuickMediaItem } from "../components/QuickMediaViewer";
 import { MessageThread } from "../components/MessageThread";
 import { PinnedMessageBar } from "../components/PinnedMessageBar";
 import { UserSidebar } from "../components/UserSidebar";
@@ -29,6 +30,8 @@ import {
   unpinGlobalMessage,
   type BanDuration,
 } from "../lib/api";
+import { parseAudioMetaFromUrl } from "../lib/audioMeta";
+import { assetUrl } from "../lib/config";
 import { isRichTextEmpty } from "../lib/richText";
 import { numericMessageId } from "../lib/messageId";
 import { globalPayloadToLine, privateApiToLine } from "../lib/messageMap";
@@ -44,7 +47,7 @@ type PrivateMsgApi = {
   sender_id: number;
   recipient_id: number;
   content: string;
-  message_type: "text" | "image" | "gif";
+  message_type: "text" | "image" | "gif" | "video" | "audio";
   caption?: string | null;
   is_read: boolean;
   created_at: string;
@@ -59,6 +62,21 @@ type UserApiRow = {
   online: boolean;
   role?: UserRole;
 };
+
+function mediaFileNameFromUrl(raw: string): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const tagged = parsed.searchParams.get("name")?.trim();
+    if (tagged) return tagged;
+    const base = parsed.pathname.split("/").pop();
+    return base ? decodeURIComponent(base) : undefined;
+  } catch {
+    const noQuery = raw.split("?")[0] ?? raw;
+    const base = noQuery.split("/").pop();
+    return base ? decodeURIComponent(base) : undefined;
+  }
+}
 
 export function ChatPage() {
   const navigate = useNavigate();
@@ -113,6 +131,7 @@ export function ChatPage() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [globalHasMoreOlder, setGlobalHasMoreOlder] = useState(true);
   const [privateHasMoreOlder, setPrivateHasMoreOlder] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   const mod = isModerator(user);
   const admin = isAdmin(user);
@@ -251,6 +270,36 @@ export function ChatPage() {
   );
 
   const oldestLoadedLineId = lines.length > 0 ? lines[0]!.id : null;
+  const mediaItems = useMemo<QuickMediaItem[]>(
+    () =>
+      lines
+        .filter((line): line is ChatLine & { contentType: QuickMediaItem["kind"] } =>
+          line.contentType === "image" ||
+          line.contentType === "gif" ||
+          line.contentType === "video" ||
+          line.contentType === "audio"
+        )
+        .map((line) => {
+          const src = assetUrl(line.body);
+          const fileName =
+            typeof line.body === "string" ? mediaFileNameFromUrl(line.body) : undefined;
+          if (line.contentType !== "audio" || typeof line.body !== "string") {
+            return { id: line.id, kind: line.contentType, src, fileName };
+          }
+          const meta = parseAudioMetaFromUrl(src);
+          return {
+            id: line.id,
+            kind: line.contentType,
+            src,
+            fileName: meta.fileName ?? fileName,
+            audioTitle: meta.title ?? meta.fileName,
+            audioArtist: meta.artist,
+            audioCoverUrl: meta.coverUrl,
+          };
+        })
+        .filter((item) => Boolean(item.src)),
+    [lines]
+  );
 
   const readEnabled =
     Boolean(accessToken && user) &&
@@ -541,6 +590,14 @@ export function ChatPage() {
       setUsersOverlayOpen(false);
     },
     [openPrivate]
+  );
+
+  const openMediaViewer = useCallback(
+    (line: ChatLine) => {
+      const idx = mediaItems.findIndex((item) => String(item.id) === String(line.id));
+      if (idx >= 0) setViewerIndex(idx);
+    },
+    [mediaItems]
   );
 
   useEffect(() => {
@@ -953,6 +1010,7 @@ export function ChatPage() {
                 ? onOpenPrivateChatFromThread
                 : undefined
             }
+            onOpenMedia={openMediaViewer}
           />
           <MessageInput
             key={
@@ -1059,6 +1117,15 @@ export function ChatPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {viewerIndex != null && mediaItems.length > 0 && (
+        <QuickMediaViewer
+          media={mediaItems}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          ariaLabel="Chat media quick viewer"
+        />
       )}
     </div>
   );

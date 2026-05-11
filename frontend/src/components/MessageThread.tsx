@@ -71,6 +71,7 @@ type Props = {
   onReactionToggle?: (messageId: string | number, kind: ReactionKind) => void;
   /** Global chat only: open private chat with the user whose name was clicked */
   onOpenPrivateChat?: (userId: number, username: string) => void;
+  onOpenMedia?: (line: ChatLine) => void;
 };
 
 /** Matches prior `min-w-[10rem]` so positioning clamps correctly. */
@@ -120,6 +121,7 @@ export function MessageThread({
   onBanFromMessage,
   onReactionToggle,
   onOpenPrivateChat,
+  onOpenMedia,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -525,6 +527,7 @@ export function MessageThread({
                   onReactionToggle={onReactionToggle}
                   onOpenPrivateChat={onOpenPrivateChat}
                   onJumpToMessage={onJumpToMessage}
+                  onOpenMedia={onOpenMedia}
                 />
               );
               return nodes;

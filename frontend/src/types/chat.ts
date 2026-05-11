@@ -1,7 +1,7 @@
 import type { MessageReactionState } from "./reactions";
 import type { UserRole } from "./user";
 
-export type ContentType = "text" | "image" | "gif";
+export type ContentType = "text" | "image" | "gif" | "video" | "audio";
 
 export type ChatMode = "global" | "private";
 
