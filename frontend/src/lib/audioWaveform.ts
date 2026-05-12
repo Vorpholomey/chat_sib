@@ -7,7 +7,7 @@ const waveformCache = new Map<string, Promise<AudioWaveformData | null>>();
 
 export function getCachedAudioWaveform(
   url: string,
-  sampleCount = 72
+  sampleCount = 48
 ): Promise<AudioWaveformData | null> {
   if (!url) return Promise.resolve(null);
   const cacheKey = `${url}::${sampleCount}`;

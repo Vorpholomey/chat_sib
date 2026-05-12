@@ -13,6 +13,19 @@ import { getCachedAudioWaveform } from "../lib/audioWaveform";
 
 const AUDIO_WAVEFORM_PLAY_EVENT = "chat-sib:audio-waveform-play";
 
+/** Handheld mic artwork when no album `coverUrl` is set (`frontend/public/retro-mic.png`, RGBA). */
+function RetroMicrophoneImage({ className }: { className?: string }) {
+  return (
+    <img
+      src="/retro-mic.png"
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className={["h-10 w-10 shrink-0 rounded object-contain bg-transparent", className].filter(Boolean).join(" ")}
+    />
+  );
+}
+
 type AudioWaveformPlayerProps = {
   src: string;
   title: string;
@@ -138,7 +151,7 @@ function AudioWaveformPlayerInner({
           className="h-10 w-10 rounded object-cover"
         />
       ) : (
-        <span className="h-10 w-10 shrink-0 rounded bg-slate-700/90" aria-hidden />
+        <RetroMicrophoneImage />
       )}
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center justify-between gap-2">
@@ -185,7 +198,7 @@ function AudioWaveformPlayerInner({
               aria-valuemax={durationSeconds || 0}
               aria-valuenow={currentSeconds}
               tabIndex={0}
-              className="flex h-8 flex-1 cursor-pointer items-end gap-[2px] rounded px-1"
+              className="flex h-6 min-h-0 min-w-0 flex-1 cursor-pointer items-end justify-between overflow-hidden rounded px-0.5"
               onClick={seekByEvent}
               onKeyDown={(e) => {
                 const audio = audioRef.current;
@@ -199,16 +212,19 @@ function AudioWaveformPlayerInner({
                 }
               }}
             >
-              {wavePeaks.map((peak, idx) => (
-                <span
-                  // Indexed list for fixed waveform bars.
-                  key={idx}
-                  className={`w-[3px] flex-1 rounded-full ${
-                    idx < playedBars ? "bg-violet-300" : "bg-slate-500/80"
-                  }`}
-                  style={{ height: `${Math.max(14, peak * 28)}px` }}
-                />
-              ))}
+              {wavePeaks.map((peak, idx) => {
+                const barH = Math.min(18, Math.max(2, peak * 16));
+                return (
+                  <span
+                    // Indexed list for fixed waveform bars.
+                    key={idx}
+                    className={`w-px shrink-0 rounded-full ${
+                      idx < playedBars ? "bg-violet-300" : "bg-slate-500/80"
+                    }`}
+                    style={{ height: `${barH}px` }}
+                  />
+                );
+              })}
             </div>
           ) : (
             <div
