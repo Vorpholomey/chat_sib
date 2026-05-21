@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, type DragEvent } from "react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
-import { Send, ImagePlus, X, Smile } from "lucide-react";
+import { Send, ImagePlus, X, Smile, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { appendAudioMetaToUrl, VOICE_MESSAGE_TAG } from "../lib/audioMeta";
 import { assetUrl } from "../lib/config";
 import { isRichTextEmpty } from "../lib/richText";
 import type { ChatLine, ContentType } from "../types/chat";
@@ -44,8 +45,16 @@ export function MessageInput({
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [previewKind, setPreviewKind] = useState<MediaKind | null>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const emojiAnchorRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaChunksRef = useRef<BlobPart[]>([]);
+  const recordingPointerIdRef = useRef<number | null>(null);
+  const cancelRecordingRef = useRef(false);
+  const deferredStopSendRef = useRef<boolean | null>(null);
 
   const isEditing = Boolean(editingLine);
   const initialHtml = (() => {
@@ -71,6 +80,19 @@ export function MessageInput({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [emojiPickerOpen]);
 
+  useEffect(
+    () => () => {
+      mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current = null;
+      mediaChunksRef.current = [];
+      recordingPointerIdRef.current = null;
+      cancelRecordingRef.current = false;
+      deferredStopSendRef.current = null;
+    },
+    []
+  );
+
   const insertEmojiAtCaret = (emoji: string) => {
     richRef.current?.insertText(emoji);
   };
@@ -88,7 +110,7 @@ export function MessageInput({
     return null;
   };
 
-  const uploadAndSend = async (file: File) => {
+  const uploadAndSend = async (file: File, options?: { voiceMessage?: boolean }) => {
     const kind = resolveMediaKind(file);
     if (!kind) {
       toast.error("Please choose a supported media file");
@@ -98,7 +120,11 @@ export function MessageInput({
       const fd = new FormData();
       fd.append("file", file);
       const { data } = await api.post<{ url: string }>("/upload", fd);
-      const full = assetUrl(data.url);
+      const fullRaw = assetUrl(data.url);
+      const full =
+        kind === "audio" && options?.voiceMessage
+          ? appendAudioMetaToUrl(fullRaw, { tag: VOICE_MESSAGE_TAG })
+          : fullRaw;
       const captionHtml = richRef.current?.getHtml() ?? "";
       const cap = !isRichTextEmpty(captionHtml) ? captionHtml : undefined;
       onSendText(
@@ -154,10 +180,91 @@ export function MessageInput({
     onClearReply?.();
   };
 
+  const resolveRecorderMimeType = (): string | undefined => {
+    const preferred = "audio/webm;codecs=opus";
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(preferred)) {
+      return preferred;
+    }
+    return "audio/webm";
+  };
+
+  const startRecording = async () => {
+    if (disabled || isEditing || preview || !isRichTextEmpty(draftHtml)) return;
+    if (isRecording || isStartingRecording) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("Audio recording is not supported in this browser");
+      return;
+    }
+    try {
+      setIsStartingRecording(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = resolveRecorderMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      mediaChunksRef.current = [];
+      cancelRecordingRef.current = false;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) mediaChunksRef.current.push(event.data);
+      };
+      recorder.start();
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      if (deferredStopSendRef.current !== null) {
+        const sendAfterStart = deferredStopSendRef.current;
+        deferredStopSendRef.current = null;
+        void stopRecording(sendAfterStart);
+      }
+    } catch {
+      toast.error("Could not start audio recording");
+    } finally {
+      setIsStartingRecording(false);
+    }
+  };
+
+  const stopRecording = async (sendAudio: boolean) => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    cancelRecordingRef.current = !sendAudio;
+    const recordingDone = new Promise<void>((resolve) => {
+      recorder.onstop = async () => {
+        const shouldSend = !cancelRecordingRef.current && mediaChunksRef.current.length > 0;
+        const blobType = recorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(mediaChunksRef.current, { type: blobType });
+        mediaChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        setIsRecording(false);
+        cancelRecordingRef.current = false;
+        if (shouldSend) {
+          const audioFile = new File([audioBlob], `recording-${Date.now()}.webm`, {
+            type: blobType,
+          });
+          await uploadAndSend(audioFile, { voiceMessage: true });
+        }
+        resolve();
+      };
+    });
+    recorder.stop();
+    await recordingDone;
+  };
+
   const canSend =
     isEditing && editingLine && editingLine.contentType !== "text"
       ? true
       : !isRichTextEmpty(draftHtml);
+  const showMicButton = !isEditing && !preview && isRichTextEmpty(draftHtml);
+  const requestStopRecording = (sendAudio: boolean) => {
+    if (isRecording) {
+      void stopRecording(sendAudio);
+      return;
+    }
+    if (isStartingRecording) {
+      deferredStopSendRef.current = sendAudio;
+    }
+  };
 
   return (
     <div className="shrink-0 space-y-2 border-t border-slate-800 pt-3">
@@ -339,16 +446,65 @@ export function MessageInput({
             }
           }}
         />
-        <button
-          type="button"
-          disabled={disabled || Boolean(preview) || !canSend}
-          title={preview ? "Send text message (clear image preview to use)" : undefined}
-          className="flex h-[40px] shrink-0 items-center gap-1 self-end rounded-lg bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
-          onClick={() => void submit()}
-        >
-          <Send className="h-4 w-4" />
-          {isEditing ? "Save" : "Send"}
-        </button>
+        {showMicButton ? (
+          <button
+            type="button"
+            disabled={disabled || isStartingRecording}
+            className="flex h-[40px] shrink-0 items-center gap-1 self-end rounded-lg bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+            aria-label={isRecording ? "Recording audio. Release to send." : "Hold to record audio"}
+            aria-pressed={isRecording}
+            title={
+              isRecording
+                ? "Recording audio… release to send"
+                : "Hold to record audio message"
+            }
+            onPointerDown={(e) => {
+              if (disabled || isStartingRecording) return;
+              recordingPointerIdRef.current = e.pointerId;
+              cancelRecordingRef.current = false;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              void startRecording();
+            }}
+            onPointerUp={(e) => {
+              if (recordingPointerIdRef.current !== e.pointerId) return;
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              recordingPointerIdRef.current = null;
+              requestStopRecording(true);
+            }}
+            onPointerCancel={(e) => {
+              if (recordingPointerIdRef.current !== e.pointerId) return;
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              recordingPointerIdRef.current = null;
+              requestStopRecording(false);
+            }}
+            onPointerLeave={(e) => {
+              if (recordingPointerIdRef.current !== e.pointerId) return;
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              recordingPointerIdRef.current = null;
+              requestStopRecording(false);
+            }}
+          >
+            <Mic className={`h-4 w-4 ${isRecording ? "animate-pulse" : ""}`} />
+            <span className="hidden sm:inline">{isRecording ? "Recording…" : "Mic"}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled || Boolean(preview) || !canSend}
+            title={preview ? "Send text message (clear image preview to use)" : undefined}
+            className="flex h-[40px] shrink-0 items-center gap-1 self-end rounded-lg bg-violet-600 px-4 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+            onClick={() => void submit()}
+          >
+            <Send className="h-4 w-4" />
+            {isEditing ? "Save" : "Send"}
+          </button>
+        )}
       </div>
       <p className="hidden text-xs text-slate-600 sm:block">
         Drag & drop a media file to attach (optional caption) · Shift+Enter for a new line ·

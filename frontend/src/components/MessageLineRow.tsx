@@ -6,7 +6,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type RefObject,
 } from "react";
-import { Music2, Pin, PlayCircle } from "lucide-react";
+import { Pin, PlayCircle } from "lucide-react";
+import { AudioWaveformPlayer } from "./AudioWaveformPlayer";
 import { parseAudioMetaFromUrl } from "../lib/audioMeta";
 import { assetUrl } from "../lib/config";
 import { numericMessageId } from "../lib/messageId";
@@ -155,6 +156,7 @@ function MessageLineRowInner({
     line.contentType === "audio" && mediaSrc ? parseAudioMetaFromUrl(mediaSrc) : {};
   const audioTitle = audioMeta.title || audioMeta.fileName || "Audio attachment";
   const audioArtist = audioMeta.artist;
+  const audioTag = audioMeta.tag;
 
   const rowRef = useRef<HTMLLIElement>(null);
 
@@ -304,6 +306,17 @@ function MessageLineRowInner({
             ) : (
               <div className="inline-block max-w-full align-top">
                 {mediaSrc ? (
+                  line.contentType === "audio" ? (
+                    <AudioWaveformPlayer
+                      key={mediaSrc}
+                      src={mediaSrc}
+                      title={audioTitle}
+                      artist={audioArtist}
+                      tag={audioTag}
+                      coverUrl={audioMeta.coverUrl}
+                      onOpenMedia={onOpenMedia ? () => onOpenMedia(line) : undefined}
+                    />
+                  ) : (
                   <button
                     type="button"
                     className="block max-w-full rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
@@ -333,30 +346,8 @@ function MessageLineRowInner({
                         </span>
                       </div>
                     )}
-                    {line.contentType === "audio" && (
-                      <div className="flex min-w-[220px] items-center gap-3 rounded border border-slate-700 bg-slate-800/80 px-3 py-2 text-left">
-                        {audioMeta.coverUrl ? (
-                          <img
-                            src={audioMeta.coverUrl}
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            className="h-10 w-10 rounded object-cover"
-                          />
-                        ) : (
-                          <span className="rounded-md bg-slate-700 p-2">
-                            <Music2 className="h-5 w-5 text-slate-200" />
-                          </span>
-                        )}
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm text-slate-200">{audioTitle}</span>
-                          {audioArtist && (
-                            <span className="block truncate text-xs text-slate-400">{audioArtist}</span>
-                          )}
-                        </span>
-                      </div>
-                    )}
                   </button>
+                  )
                 ) : (
                   <span className="mt-1 block text-xs text-slate-500">
                     Unavailable
