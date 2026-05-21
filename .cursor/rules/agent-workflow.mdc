@@ -1,5 +1,5 @@
 ---
-description: Route every task through architecture-planner, then delegate to backend-dev and/or frontend-dev
+description: Route every task through architecture-planner, then delegate to backend-dev, frontend-dev, and/or android-dev
 alwaysApply: true
 ---
 
@@ -18,15 +18,17 @@ Invoke the **architecture-planner** subagent (`.cursor/agents/architecture-plann
 
 ## 2. Delegate implementation
 
-After the plan exists, delegate execution using **backend-dev** and **frontend-dev** as appropriate:
+After the plan exists, delegate execution using **backend-dev**, **frontend-dev**, and **android-dev** as appropriate:
 
 | Work belongs to | Use subagent |
 |-----------------|--------------|
 | `backend/`, APIs, DB, auth, WebSockets server, migrations, Docker/nginx affecting the API | `.cursor/agents/backend-dev.md` |
 | `frontend/`, UI, components, client state, a11y, Vite/build | `.cursor/agents/frontend-dev.md` |
+| `android/`, Kotlin/Android modules, Gradle, Compose/Views, Room, platform APIs, Play release | `.cursor/agents/android-dev.md` |
 
-- **Backend-only or frontend-only tasks**: invoke the matching specialist; the plan from step 1 still applies as scope and acceptance criteria.
-- **Full-stack tasks**: run **architecture-planner** once, then delegate **backend-dev** and **frontend-dev** in dependency order (typically backend contracts/migrations before frontend wiring the UI).
+- **Single-tier tasks**: invoke the matching specialist; the plan from step 1 still applies as scope and acceptance criteria.
+- **Full-stack tasks**: run **architecture-planner** once, then delegate specialists in dependency order (typically backend contracts/migrations before web or mobile clients wire the UI).
+- **Android + backend**: same as full-stack—planner once, then **backend-dev** for API/contracts, then **android-dev** for the client.
 
 ## 3. Orchestration rules
 
