@@ -1,5 +1,31 @@
 @import "tailwindcss";
 
+@theme {
+  --color-background: var(--color-slate-950);
+  --color-surface: var(--color-slate-900);
+  --color-surface-elevated: var(--color-slate-800);
+  --color-foreground: var(--color-slate-100);
+  --color-foreground-muted: var(--color-slate-400);
+  --color-foreground-on-primary: #ffffff;
+  --color-border: var(--color-slate-800);
+  --color-border-strong: var(--color-slate-700);
+  --color-primary: var(--color-violet-600);
+  --color-primary-hover: var(--color-violet-500);
+  --color-accent: var(--color-violet-300);
+  --color-link: var(--color-violet-400);
+  --color-warning: var(--color-amber-100);
+  --color-warning-surface: color-mix(in srgb, var(--color-amber-950) 40%, transparent);
+  --color-unread: var(--color-sky-400);
+  --color-danger: var(--color-red-300);
+  --color-success: var(--color-emerald-400);
+  --color-role-user: color-mix(in srgb, var(--color-slate-700) 80%, transparent);
+  --color-role-user-fg: var(--color-slate-200);
+  --color-role-mod: color-mix(in srgb, var(--color-amber-900) 60%, transparent);
+  --color-role-mod-fg: var(--color-amber-200);
+  --color-role-admin: color-mix(in srgb, var(--color-rose-900) 50%, transparent);
+  --color-role-admin-fg: var(--color-rose-200);
+}
+
 html {
   height: 100%;
   -webkit-text-size-adjust: 100%;
@@ -14,7 +40,7 @@ body,
 }
 
 body {
-  @apply bg-slate-950 text-slate-100 antialiased;
+  @apply bg-background text-foreground antialiased;
   overflow-x: hidden;
 }
 

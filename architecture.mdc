@@ -8,14 +8,14 @@ alwaysApply: false
 
 # chat_sib — architecture
 
-This document describes the **chat_sib** repository: a full-stack, real-time chat application split into **`backend/`** (Python/FastAPI) and **`frontend/`** (React/TypeScript).
+This document describes the **chat_sib** repository: a full-stack, real-time chat application with **`backend/`** (Python/FastAPI), **`frontend/`** (React/TypeScript), and **`android/`** (Kotlin/Jetpack Compose).
 
 ## 1. Repository layout
 
 ```
 chat_sib/
 ├── architecture.mdc      # This file (Cursor rule + human-readable reference)
-├── README.md             # Monorepo entry: quick start for both apps
+├── README.md             # Monorepo entry: quick start for all apps
 ├── docker-compose.yml    # Postgres + API + nginx (production-style stack)
 ├── .github/workflows/    # CI: build/push Docker images to Docker Hub
 ├── compose.env.example   # Template for docker compose secrets/overrides (copy to compose.env)
@@ -27,18 +27,23 @@ chat_sib/
 │   ├── alembic.ini
 │   ├── requirements.txt
 │   └── .env.example      # Copy to .env; secrets never committed
-└── frontend/             # Vite + React SPA
-    ├── Dockerfile        # Multi-stage: Vite build + nginx static + API proxy
-    ├── nginx.conf        # SPA fallback; proxies API/WS to backend service
-    ├── src/
-    ├── package.json
-    └── .env.example      # VITE_* for production builds
+├── frontend/             # Vite + React SPA
+│   ├── Dockerfile        # Multi-stage: Vite build + nginx static + API proxy
+│   ├── nginx.conf        # SPA fallback; proxies API/WS to backend service
+│   ├── src/
+│   ├── package.json
+│   └── .env.example      # VITE_* for production builds
+└── android/              # Kotlin + Jetpack Compose client (see §7)
+    ├── app/              # Application module
+    ├── gradle/           # Version catalog (libs.versions.toml)
+    └── README.md         # Emulator/device setup vs local backend
 ```
 
 **Separation of concerns**
 
 - **Backend** owns persistence, authentication, authorization, WebSocket fan-out, file storage paths, and REST/OpenAPI contracts.
 - **Frontend** owns routing, UI state, optimistic UX, and calling the API/WebSocket using the same URL paths the backend exposes (often via the Vite dev proxy).
+- **Android** mirrors the same REST/WebSocket contracts as the SPA: Kotlin + Jetpack Compose, JWT in EncryptedSharedPreferences, global + private chat, media, read state, reactions, moderation, search, and voice messages. Debug builds default to `http://10.0.2.2:8000` (emulator → host API); see `android/README.md`.
 
 ### 1.1 Docker deployment
 
@@ -221,3 +226,47 @@ flowchart LR
 ```
 
 This is the mental model for **chat_sib**: a **stateless REST + stateful in-process WebSocket** backend paired with a **SPA** that uses the same routes in dev (proxy) and prod (explicit API URL).
+
+## 7. Android client (`android/`)
+
+### 7.1 Stack
+
+| Layer | Technology |
+|-------|------------|
+| UI | Jetpack Compose, Material 3 |
+| DI | Hilt |
+| HTTP | Retrofit, OkHttp, kotlinx.serialization |
+| Realtime | OkHttp WebSocket → `/ws/chat?token=` |
+| Secrets | AndroidX Security EncryptedSharedPreferences (access + refresh JWT) |
+| Media | Coil (image/gif), Media3 ExoPlayer (video/audio); waveform peaks via `MediaCodec` + `WaveformCache` |
+| Read cache | DataStore (read cursors per user+chat) |
+
+### 7.2 Scope (parity with web SPA)
+
+- **Auth**: register, login, refresh, forgot-password, change-password-after-temporary; ban/password-gate error strings aligned with `auth_constants.py` / `frontend/src/lib/authErrors.ts`.
+- **Chat**: global room + private DMs; WS parser from `useChatSocket.ts` / `messageMap.ts`; text, media (upload + WS), replies, reactions, edit/delete (REST), pins, scroll-up history (page size **20**).
+- **Read state**: `/api/chats/{chat_id}/read-status`, mark-all-read, debounced POST, “New messages” divider.
+- **Moderation**: ban, set role, mod delete, pin/unpin (role-gated).
+- **Search**: global/private message search with context load and in-thread navigation.
+- **Voice**: hold-to-record mic when composer empty; upload + audio message with voice tag; inline **waveform player** (client-side peak decode + cache, ExoPlayer playback) per `docs/voice-messaging-requirements.md`.
+- **Display / compose**: sanitized HTML for text/captions (`RichTextSanitizer`, `RichTextEditor` WebView WYSIWYG with bold/italic/link on selection long-press or context menu, parity with web); `AssetUrlResolver` mirrors web `assetUrl`.
+- **Debug**: optional API base URL override (debug builds) for physical-device testing.
+
+### 7.3 CI
+
+- `.github/workflows/android-ci.yml` — JDK 17, `./gradlew :app:assembleDebug` and unit tests.
+
+### 7.4 Design tokens / UI parity
+
+Cross-platform colors are defined in the web UI kit and mirrored on Android:
+
+| Layer | Web | Android |
+|-------|-----|---------|
+| Raw + semantic palette | `frontend/src/index.css` `@theme` | `com.chatsib.app.ui.theme.AppColors` |
+| Token → utility map | `frontend/src/ui/tokens/colors.ts` | Same `AppColors` keys (`Background`, `Primary`, `RoleUser`, …) |
+| Element → parts | `frontend/src/ui/tokens/elementColors.ts` | `ElementColors` (`MessageBubbleOwn`, `PinnedBar`, `InputDefault`, …) |
+| Material bridge | Tailwind classes | `chatSibDarkColorScheme()` in `ColorScheme.kt` + `ChatSibTheme` (dark-only, matches SPA) |
+
+**Username colors** use the same FNV-1a → HSL algorithm: `frontend/src/lib/usernameColor.ts` ↔ `com.chatsib.app.core.UsernameColor`.
+
+When the web palette changes, update `AppColors` / `ElementColors` using `elementColors.ts` swatches as the checklist. Compose screens should prefer `ElementColors` for widget-level styling; `MaterialTheme.colorScheme` remains a transitional bridge for generic M3 widgets.

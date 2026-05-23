@@ -8,8 +8,14 @@ Monorepo for a real-time web chat: **global room**, **private messaging**, **JWT
 |-----------|------|
 | [`backend/`](backend/) | FastAPI API, SQLAlchemy models, Alembic migrations, WebSocket hub |
 | [`frontend/`](frontend/) | React + TypeScript + Vite + Tailwind SPA |
+| [`android/`](android/) | Kotlin + Jetpack Compose client (auth, global/private chat, media, voice, search, moderation) |
 
 See **[`architecture.mdc`](architecture.mdc)** for a full architecture description (stack, data flow, modules, and configuration).
+
+## Documentation
+
+- **Android client (implemented features):** [`docs/android-client.md`](docs/android-client.md)
+- **Voice / waveform requirements:** [`docs/voice-messaging-requirements.md`](docs/voice-messaging-requirements.md)
 
 ## Quick start
 
@@ -36,6 +42,15 @@ npm run dev -- --host
 ```
 
 Dev UI: `http://127.0.0.1:5173` — Vite proxies `/api`, `/auth`, `/upload`, `/uploads`, and `/ws` to the backend on port 8000.
+
+**Android** (emulator; API must listen on `0.0.0.0:8000` or host port forwarded):
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+Open the project in Android Studio and run on an emulator. Debug builds use `http://10.0.2.2:8000` (emulator → host `localhost:8000`). See [`android/README.md`](android/README.md).
 
 ## Docker
 
@@ -94,5 +109,6 @@ Environment variables for the API live in **`backend/.env`** (see `backend/.env.
 
 - Backend setup and API overview: [`backend/README.md`](backend/README.md)
 - Frontend scripts and env: [`frontend/README.md`](frontend/README.md)
+- Android emulator/device setup: [`android/README.md`](android/README.md)
 - Architecture (full): [`architecture.mdc`](architecture.mdc)
 

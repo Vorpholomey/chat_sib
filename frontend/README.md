@@ -18,6 +18,39 @@ VITE_API_URL=https://api.example.com
 
 In **development**, `VITE_API_URL` is empty and the app calls the same origin (`localhost:5173`); `vite.config.ts` proxies API and WebSocket traffic to the FastAPI server.
 
+## UI kit
+
+Design tokens and reusable primitives live under `frontend/src/ui/`.
+
+| Resource | Location |
+|----------|----------|
+| Semantic colors (`@theme`) | `src/index.css` |
+| Token → class map | `src/ui/tokens/colors.ts` |
+| **Element → color map** | `src/ui/tokens/elementColors.ts` |
+| Components | `src/ui/components/` |
+
+**Dev gallery** (component previews + full element→color table):
+
+```bash
+npm run dev
+# open http://localhost:5173/dev/ui-kit
+```
+
+The `/dev/ui-kit` route is registered only in development builds.
+
+**Usage:**
+
+```tsx
+import { Button, Input, Label, Card, elementColors } from "./ui";
+```
+
+Migrate feature code incrementally; new UI should use kit primitives and semantic tokens (`bg-primary`, `text-foreground-muted`) instead of raw `slate-*` / `violet-*` classes.
+
+**Exceptions (not fixed tokens):**
+
+- Per-user username colors: `lib/usernameColor.ts` (inline `style`)
+- Sonner toasts: third-party palette (`richColors`)
+
 ## Backend integration
 
 - REST: `/auth/register`, `/auth/login`, `/api/private/me`, `/api/users`, `/api/private/conversations`, `/api/private/messages/{id}`, `/upload`

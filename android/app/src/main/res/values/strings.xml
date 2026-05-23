@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chat Sib</string>
+    <string name="attribution_audio_playback">Play voice and audio messages in chat</string>
+    <string name="attribution_voice_record">Record voice messages in chat</string>
+</resources>

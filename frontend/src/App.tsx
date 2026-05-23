@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -6,6 +7,10 @@ import { ChatPage } from "./pages/ChatPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 
+const UiKitPage = import.meta.env.DEV
+  ? lazy(() => import("./ui/pages/UiKitPage").then((m) => ({ default: m.UiKitPage })))
+  : null;
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -13,6 +18,16 @@ export default function App() {
         <Toaster richColors position="top-center" />
         <main className="mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(0.75rem,env(safe-area-inset-right))]">
           <Routes>
+            {UiKitPage ? (
+              <Route
+                path="/dev/ui-kit"
+                element={
+                  <Suspense fallback={<p className="p-4 text-foreground-muted">Loading UI kit…</p>}>
+                    <UiKitPage />
+                  </Suspense>
+                }
+              />
+            ) : null}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route
