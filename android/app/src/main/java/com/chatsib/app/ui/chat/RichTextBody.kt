@@ -4,7 +4,6 @@ import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,9 +38,7 @@ fun RichTextBody(
     }
     val context = LocalContext.current
     AndroidView(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 24.dp),
+        modifier = modifier.heightIn(min = 24.dp),
         factory = {
             WebView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -54,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -644,6 +646,7 @@ fun MessageBubble(
         Column(
             modifier = Modifier
                 .widthIn(max = maxBubbleWidth)
+                .wrapContentWidth(align = if (line.isOwn) Alignment.End else Alignment.Start)
                 .align(if (line.isOwn) Alignment.CenterEnd else Alignment.CenterStart),
             horizontalAlignment = align,
         ) {
@@ -651,6 +654,7 @@ fun MessageBubble(
                 Box(
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
+                        .wrapContentWidth(align = if (line.isOwn) Alignment.End else Alignment.Start)
                         .pointerInput(line.id, currentUserId) {
                             detectTapGestures(
                                 onLongPress = {
@@ -690,7 +694,10 @@ fun MessageBubble(
                         )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Column {
+                    Column(
+                        modifier = Modifier.widthIn(max = maxBubbleWidth),
+                        horizontalAlignment = align,
+                    ) {
                         if (!line.isOwn) {
                             Text(
                                 text = line.author,
@@ -701,10 +708,11 @@ fun MessageBubble(
                             )
                         }
                         line.replyTo?.let { ref ->
-                            ReplyQuoteInBubble(ref = ref)
+                            ReplyQuoteInBubble(ref = ref, maxWidth = maxBubbleWidth)
                         }
                         MessageLineContent(
                             line = line,
+                            modifier = Modifier.widthIn(max = maxBubbleWidth),
                             searchHighlight = searchHighlight,
                             apiBaseUrl = apiBaseUrl,
                         )
@@ -715,23 +723,19 @@ fun MessageBubble(
                             onToggle = onToggleReaction,
                         )
                         if (sentTime.isNotEmpty()) {
-                            Row(
+                            Text(
+                                text = buildString {
+                                    append(sentTime)
+                                    if (line.isOwn && line.editedAt != null) {
+                                        append(" · edited")
+                                    }
+                                },
                                 modifier = Modifier
-                                    .fillMaxWidth()
+                                    .align(Alignment.End)
                                     .padding(top = 4.dp),
-                                horizontalArrangement = Arrangement.End,
-                            ) {
-                                Text(
-                                    text = buildString {
-                                        append(sentTime)
-                                        if (line.isOwn && line.editedAt != null) {
-                                            append(" · edited")
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = ElementColors.MessageEditedLabel.foreground,
-                                )
-                            }
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ElementColors.MessageEditedLabel.foreground,
+                            )
                         }
                     }
                 }
@@ -766,10 +770,11 @@ private fun MainChatViewModel.MessageMenuFlags.hasAnyAction(): Boolean =
     showReply || showEdit || showDelete || showModDelete || showPin || showBan
 
 @Composable
-private fun ReplyQuoteInBubble(ref: ReplyRef) {
+private fun ReplyQuoteInBubble(ref: ReplyRef, maxWidth: Dp) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = maxWidth)
+            .wrapContentWidth()
             .padding(bottom = 4.dp)
             .background(
                 ElementColors.ReplyQuoteInBubble.background,

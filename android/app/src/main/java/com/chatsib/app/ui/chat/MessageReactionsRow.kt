@@ -2,7 +2,6 @@ package com.chatsib.app.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
@@ -37,9 +36,7 @@ fun MessageReactionsRow(
     val canInteract = currentUserId != null
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp),
+        modifier = modifier.padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ReactionKinds.ALL.forEach { kind ->

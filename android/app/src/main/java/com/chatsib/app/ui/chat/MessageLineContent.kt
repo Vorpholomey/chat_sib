@@ -2,8 +2,9 @@ package com.chatsib.app.ui.chat
 
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -51,7 +52,7 @@ fun MessageLineContent(
                             "Image attachment"
                         },
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .wrapContentWidth()
                             .heightIn(max = 320.dp),
                         contentScale = ContentScale.Fit,
                     )
@@ -122,7 +123,7 @@ private fun VideoPlayer(url: String) {
     }
     AndroidView(
         modifier = Modifier
-            .fillMaxWidth()
+            .wrapContentWidth()
             .heightIn(min = 160.dp, max = 320.dp),
         factory = { ctx ->
             PlayerView(ctx).apply {
